@@ -1,0 +1,5 @@
+# bearlang
+
+```
+print("hello world")
+```
