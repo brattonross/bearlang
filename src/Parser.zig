@@ -26,14 +26,26 @@ fn advance(self: *Parser) !void {
 
 fn parseStatement(self: *Parser) !Statement {
     return switch (self.current_token.kind) {
-        .Let => self.parseLetStatement(),
+        .let => self.parseLetStatement(),
         else => self.parseExpressionStatement(),
     };
 }
 
 fn parseLetStatement(self: *Parser) !Statement {
-    _ = self;
-    return error.Todo;
+    try self.advance();
+
+    const name = self.current_token.lexeme;
+    try self.advance();
+
+    if (self.current_token.kind != .assign) {
+        return error.InvalidLetStatement;
+    }
+    try self.advance();
+
+    const value = try self.parseExpression(.lowest);
+
+    const let = LetStatement{ .name = name, .value = value };
+    return .{ .let = let };
 }
 
 fn parseExpressionStatement(self: *Parser) !Statement {
@@ -46,19 +58,24 @@ fn parseExpression(self: *Parser, precedence: Precedence) !Expression {
 
     // prefix parse fns
     const left = switch (self.current_token.kind) {
-        .identifier => try self.parseIdentifier(),
+        .identifier => self.parseIdentifier(),
+        .number => try self.parseNumber(),
         else => return error.InvalidExpression,
     };
 
     return left;
 }
 
-fn parseIdentifier(self: *Parser) !Expression {
-    _ = self;
+fn parseIdentifier(self: *Parser) Expression {
+    return .{ .identifier = self.current_token.lexeme };
+}
+
+fn parseNumber(self: *Parser) !Expression {
+    const value = try std.fmt.parseFloat(f64, self.current_token.lexeme);
+    return .{ .number = value };
 }
 
 const Statement = union(enum) {
-    identifier: Identifier,
     let: LetStatement,
     expression: Expression,
 };
@@ -67,10 +84,11 @@ const Identifier = []const u8;
 
 const LetStatement = struct {
     name: Identifier,
-    value: *Expression,
+    value: Expression,
 };
 
 const Expression = union(enum) {
+    identifier: Identifier,
     number: f64,
 };
 
@@ -89,5 +107,30 @@ test "identifier" {
     var parser = try Parser.init(&lexer);
 
     const statement = try parser.next();
-    try std.testing.expectEqualStrings("foobar", statement.?.identifier);
+    try std.testing.expectEqualStrings("foobar", statement.?.expression.identifier);
+}
+
+test "integer" {
+    var lexer = Lexer.init("5");
+    var parser = try Parser.init(&lexer);
+
+    const statement = try parser.next();
+    try std.testing.expectEqual(5.0, statement.?.expression.number);
+}
+
+test "float" {
+    var lexer = Lexer.init("5.123");
+    var parser = try Parser.init(&lexer);
+
+    const statement = try parser.next();
+    try std.testing.expectEqual(5.123, statement.?.expression.number);
+}
+
+test "let" {
+    var lexer = Lexer.init("let foo = 5");
+    var parser = try Parser.init(&lexer);
+
+    const statement = try parser.next();
+    try std.testing.expectEqualStrings("foo", statement.?.let.name);
+    try std.testing.expectEqual(5.0, statement.?.let.value.number);
 }

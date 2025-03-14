@@ -82,7 +82,7 @@ fn scanIdentifier(self: *Lexer) Token {
     const lexeme = self.src[start_pos..self.pos];
     var kind: Token.Kind = .identifier;
     if (std.mem.eql(u8, "let", lexeme)) {
-        kind = .Let;
+        kind = .let;
     }
 
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };
