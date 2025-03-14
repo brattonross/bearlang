@@ -1,26 +1,26 @@
 const std = @import("std");
 
-const Token = struct {
+pub const Token = struct {
     kind: Kind,
     lexeme: []const u8,
     line: u32,
 
     const Kind = enum {
-        EOF,
+        eof,
 
-        Identifier,
-        Number,
-        String,
+        identifier,
+        number,
+        string,
 
-        Assign,
-        Plus,
+        assign,
+        plus,
 
-        LeftParen,
-        RightParen,
-        LeftBrace,
-        RightBrace,
+        left_paren,
+        right_paren,
+        left_brace,
+        right_brace,
 
-        Let,
+        let,
     };
 };
 
@@ -35,20 +35,28 @@ pub fn init(src: []const u8) Lexer {
 }
 
 pub fn nextToken(self: *Lexer) !Token {
-    var token = Token{ .kind = .EOF, .lexeme = self.src[self.pos .. self.pos + 1], .line = self.line };
+    while (self.currentLexeme()) |current| {
+        if (isWhitespace(current)) {
+            self.advance();
+        } else {
+            break;
+        }
+    }
+
+    var token = Token{ .kind = .eof, .lexeme = "", .line = self.line };
 
     if (self.currentLexeme()) |current| switch (current) {
-        '=' => token.kind = .Assign,
-        '+' => token.kind = .Plus,
-        '(' => token.kind = .LeftParen,
-        ')' => token.kind = .RightParen,
-        '{' => token.kind = .LeftBrace,
-        '}' => token.kind = .RightBrace,
+        '=' => token.kind = .assign,
+        '+' => token.kind = .plus,
+        '(' => token.kind = .left_paren,
+        ')' => token.kind = .right_paren,
+        '{' => token.kind = .left_brace,
+        '}' => token.kind = .right_brace,
         '"' => return self.scanString(),
         else => {
-            if (is_alpha(current)) {
+            if (isAlpha(current)) {
                 return self.scanIdentifier();
-            } else if (is_digit(current)) {
+            } else if (isDigit(current)) {
                 return self.scanNumber();
             } else {
                 return error.UnexpectedCharacter;
@@ -56,6 +64,9 @@ pub fn nextToken(self: *Lexer) !Token {
         },
     };
 
+    if (token.kind != .eof) {
+        token.lexeme = self.src[self.pos .. self.pos + 1];
+    }
     self.advance();
     return token;
 }
@@ -64,12 +75,12 @@ fn scanIdentifier(self: *Lexer) Token {
     const start_pos = self.pos;
 
     while (self.currentLexeme()) |current| {
-        if (!is_alpha(current)) break;
+        if (!isAlpha(current)) break;
         self.advance();
     }
 
     const lexeme = self.src[start_pos..self.pos];
-    var kind: Token.Kind = .Identifier;
+    var kind: Token.Kind = .identifier;
     if (std.mem.eql(u8, "let", lexeme)) {
         kind = .Let;
     }
@@ -81,22 +92,22 @@ fn scanNumber(self: *Lexer) Token {
     const start_pos = self.pos;
 
     while (self.currentLexeme()) |current| {
-        if (!is_digit(current)) break;
+        if (!isDigit(current)) break;
         self.advance();
     }
 
     if (self.currentLexeme()) |maybe_period| if (maybe_period == '.') {
-        if (self.peekLexeme()) |peek| if (is_digit(peek)) {
+        if (self.peekLexeme()) |peek| if (isDigit(peek)) {
             self.advance();
 
             while (self.currentLexeme()) |current| {
-                if (!is_digit(current)) break;
+                if (!isDigit(current)) break;
                 self.advance();
             }
         };
     };
 
-    return .{ .kind = .Number, .lexeme = self.src[start_pos..self.pos], .line = self.line };
+    return .{ .kind = .number, .lexeme = self.src[start_pos..self.pos], .line = self.line };
 }
 
 fn scanString(self: *Lexer) !Token {
@@ -111,7 +122,7 @@ fn scanString(self: *Lexer) !Token {
         }
     }
     self.advance(); // advance past closing `"`
-    return .{ .kind = .String, .lexeme = self.src[start_pos .. self.pos - 1], .line = self.line };
+    return .{ .kind = .string, .lexeme = self.src[start_pos .. self.pos - 1], .line = self.line };
 }
 
 fn advance(self: *Lexer) void {
@@ -137,19 +148,23 @@ fn lexemeAt(self: Lexer, pos: u32) ?u8 {
     return if (pos >= self.src.len) null else self.src[pos];
 }
 
-fn is_alpha(c: u8) bool {
+fn isAlpha(c: u8) bool {
     return ('a' <= c and c <= 'z') or ('A' <= c and c <= 'Z') or c == '_';
 }
 
-fn is_digit(c: u8) bool {
+fn isDigit(c: u8) bool {
     return '0' <= c and c <= '9';
+}
+
+fn isWhitespace(c: u8) bool {
+    return c == ' ' or c == '\t' or c == '\r' or c == '\n';
 }
 
 test "identifier" {
     var lexer = Lexer.init("foobar");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.Identifier, token.kind);
+    try std.testing.expectEqual(.identifier, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("foobar", token.lexeme);
 }
@@ -158,7 +173,7 @@ test "integer" {
     var lexer = Lexer.init("1234");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.Number, token.kind);
+    try std.testing.expectEqual(.number, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("1234", token.lexeme);
 }
@@ -167,7 +182,7 @@ test "float" {
     var lexer = Lexer.init("1234.56");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.Number, token.kind);
+    try std.testing.expectEqual(.number, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("1234.56", token.lexeme);
 }
@@ -176,7 +191,7 @@ test "string" {
     var lexer = Lexer.init("\"foo bar\"");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.String, token.kind);
+    try std.testing.expectEqual(.string, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("foo bar", token.lexeme);
 }
@@ -185,7 +200,7 @@ test "assign" {
     var lexer = Lexer.init("=");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.Assign, token.kind);
+    try std.testing.expectEqual(.assign, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("=", token.lexeme);
 }
@@ -194,7 +209,7 @@ test "plus" {
     var lexer = Lexer.init("+");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.Plus, token.kind);
+    try std.testing.expectEqual(.plus, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("+", token.lexeme);
 }
@@ -203,12 +218,12 @@ test "parens" {
     var lexer = Lexer.init("()");
 
     var token = try lexer.nextToken();
-    try std.testing.expectEqual(.LeftParen, token.kind);
+    try std.testing.expectEqual(.left_paren, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("(", token.lexeme);
 
     token = try lexer.nextToken();
-    try std.testing.expectEqual(.RightParen, token.kind);
+    try std.testing.expectEqual(.right_paren, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings(")", token.lexeme);
 }
@@ -217,12 +232,12 @@ test "braces" {
     var lexer = Lexer.init("{}");
 
     var token = try lexer.nextToken();
-    try std.testing.expectEqual(.LeftBrace, token.kind);
+    try std.testing.expectEqual(.left_brace, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("{", token.lexeme);
 
     token = try lexer.nextToken();
-    try std.testing.expectEqual(.RightBrace, token.kind);
+    try std.testing.expectEqual(.right_brace, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("}", token.lexeme);
 }
@@ -231,7 +246,7 @@ test "let" {
     var lexer = Lexer.init("let");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.Let, token.kind);
+    try std.testing.expectEqual(.let, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("let", token.lexeme);
 }

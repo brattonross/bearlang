@@ -43,11 +43,12 @@ fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
 
 fn runSrc(src: []const u8) !void {
     var lexer = Lexer.init(src);
-    const parser = Parser.init(&lexer);
+    const parser = Parser{ .lexer = &lexer };
 
     _ = parser;
 }
 
 test {
     _ = @import("./Lexer.zig");
+    _ = @import("./Parser.zig");
 }
