@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Lexer = @import("./Lexer.zig");
 const Parser = @import("./Parser.zig");
+const eval = @import("./eval.zig").eval;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -28,7 +29,7 @@ fn runREPL(allocator: Allocator) !void {
     while (true) {
         try stdout.writeAll(">> ");
         if (try stdin.readUntilDelimiterOrEofAlloc(allocator, '\n', 1024)) |src| {
-            try runSrc(src);
+            try runSrc(allocator, src);
         }
     }
 }
@@ -38,14 +39,13 @@ fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
     defer cwd.close();
 
     const src = try cwd.readFileAlloc(allocator, file_path, 1024);
-    try runSrc(src);
+    try runSrc(allocator, src);
 }
 
-fn runSrc(src: []const u8) !void {
+fn runSrc(allocator: Allocator, src: []const u8) !void {
     var lexer = Lexer.init(src);
-    const parser = Parser{ .lexer = &lexer };
-
-    _ = parser;
+    var parser = try Parser.init(allocator, &lexer);
+    _ = try eval(&parser);
 }
 
 test {

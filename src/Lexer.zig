@@ -5,7 +5,7 @@ pub const Token = struct {
     lexeme: []const u8,
     line: u32,
 
-    const Kind = enum {
+    pub const Kind = enum {
         eof,
 
         identifier,
@@ -19,6 +19,7 @@ pub const Token = struct {
         right_paren,
         left_brace,
         right_brace,
+        comma,
 
         let,
     };
@@ -52,6 +53,7 @@ pub fn nextToken(self: *Lexer) !Token {
         ')' => token.kind = .right_paren,
         '{' => token.kind = .left_brace,
         '}' => token.kind = .right_brace,
+        ',' => token.kind = .comma,
         '"' => return self.scanString(),
         else => {
             if (isAlpha(current)) {
