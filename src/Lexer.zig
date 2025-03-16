@@ -14,6 +14,12 @@ pub const Token = struct {
 
         assign,
         plus,
+        minus,
+        asterisk,
+        slash,
+        bang,
+        @"and",
+        @"or",
 
         left_paren,
         right_paren,
@@ -22,6 +28,8 @@ pub const Token = struct {
         comma,
 
         let,
+        true,
+        false,
     };
 };
 
@@ -49,11 +57,15 @@ pub fn nextToken(self: *Lexer) !Token {
     if (self.currentLexeme()) |current| switch (current) {
         '=' => token.kind = .assign,
         '+' => token.kind = .plus,
+        '-' => token.kind = .minus,
         '(' => token.kind = .left_paren,
         ')' => token.kind = .right_paren,
         '{' => token.kind = .left_brace,
         '}' => token.kind = .right_brace,
         ',' => token.kind = .comma,
+        '*' => token.kind = .asterisk,
+        '/' => token.kind = .slash,
+        '!' => token.kind = .bang,
         '"' => return self.scanString(),
         else => {
             if (isAlpha(current)) {
@@ -85,6 +97,14 @@ fn scanIdentifier(self: *Lexer) Token {
     var kind: Token.Kind = .identifier;
     if (std.mem.eql(u8, "let", lexeme)) {
         kind = .let;
+    } else if (std.mem.eql(u8, "true", lexeme)) {
+        kind = .true;
+    } else if (std.mem.eql(u8, "false", lexeme)) {
+        kind = .false;
+    } else if (std.mem.eql(u8, "and", lexeme)) {
+        kind = .@"and";
+    } else if (std.mem.eql(u8, "or", lexeme)) {
+        kind = .@"or";
     }
 
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };
@@ -251,4 +271,42 @@ test "let" {
     try std.testing.expectEqual(.let, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("let", token.lexeme);
+}
+
+test "and" {
+    var lexer = Lexer.init("foo and bar");
+
+    const test_cases = [_]struct {
+        kind: Token.Kind,
+        lexeme: []const u8,
+    }{
+        .{ .kind = .identifier, .lexeme = "foo" },
+        .{ .kind = .@"and", .lexeme = "and" },
+        .{ .kind = .identifier, .lexeme = "bar" },
+    };
+
+    for (test_cases) |test_case| {
+        const token = try lexer.nextToken();
+        try std.testing.expectEqual(test_case.kind, token.kind);
+        try std.testing.expectEqualStrings(test_case.lexeme, token.lexeme);
+    }
+}
+
+test "or" {
+    var lexer = Lexer.init("foo or bar");
+
+    const test_cases = [_]struct {
+        kind: Token.Kind,
+        lexeme: []const u8,
+    }{
+        .{ .kind = .identifier, .lexeme = "foo" },
+        .{ .kind = .@"or", .lexeme = "or" },
+        .{ .kind = .identifier, .lexeme = "bar" },
+    };
+
+    for (test_cases) |test_case| {
+        const token = try lexer.nextToken();
+        try std.testing.expectEqual(test_case.kind, token.kind);
+        try std.testing.expectEqualStrings(test_case.lexeme, token.lexeme);
+    }
 }

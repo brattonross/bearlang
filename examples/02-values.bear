@@ -1,0 +1,8 @@
+print("bear" + "lang")
+
+print("1 + 1 = ", 1 + 1)
+print("7.0 / 3.0 = ", 7.0 / 3.0)
+
+print("true and false = ", true and false)
+print("true or false = ", true or false)
+print("!true = ", !true)

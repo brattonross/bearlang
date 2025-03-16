@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Lexer = @import("./Lexer.zig");
 const Parser = @import("./Parser.zig");
-const eval = @import("./eval.zig").eval;
+const Interpreter = @import("./Interpreter.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -36,8 +36,6 @@ fn runREPL(allocator: Allocator) !void {
 
 fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
     var cwd = std.fs.cwd();
-    defer cwd.close();
-
     const src = try cwd.readFileAlloc(allocator, file_path, 1024);
     try runSrc(allocator, src);
 }
@@ -45,10 +43,12 @@ fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
 fn runSrc(allocator: Allocator, src: []const u8) !void {
     var lexer = Lexer.init(src);
     var parser = try Parser.init(allocator, &lexer);
-    _ = try eval(&parser);
+    var interpreter = Interpreter.init(allocator, &parser);
+    _ = try interpreter.run();
 }
 
 test {
     _ = @import("./Lexer.zig");
     _ = @import("./Parser.zig");
+    _ = @import("./Interpreter.zig");
 }
