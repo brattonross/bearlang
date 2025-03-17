@@ -47,9 +47,10 @@ fn parseStatement(self: *Parser) !*Statement {
 }
 
 fn parseLetStatement(self: *Parser) !*Statement {
+    const let_token = self.current_token;
     try self.advance();
 
-    const name = self.current_token.lexeme;
+    const ident_token = self.current_token;
     try self.advance();
 
     if (self.current_token.kind != .assign) {
@@ -59,13 +60,21 @@ fn parseLetStatement(self: *Parser) !*Statement {
 
     const value = try self.parseExpression(.lowest);
 
-    const let = LetStatement{ .name = name, .value = value };
+    const let = LetStatement{
+        .token = let_token,
+        .name = .{
+            .token = ident_token,
+            .lexeme = ident_token.lexeme,
+        },
+        .value = value,
+    };
     const statement = try self.allocator.create(Statement);
     statement.* = .{ .let = let };
     return statement;
 }
 
 fn parseForStatement(self: *Parser) !*Statement {
+    const token = self.current_token;
     try self.advance(); // advance past `for`
 
     var initial: ?*Statement = null;
@@ -89,6 +98,7 @@ fn parseForStatement(self: *Parser) !*Statement {
     const block = try self.parseBlockStatement();
 
     const @"for" = ForStatement{
+        .token = token,
         .initial = initial,
         .condition = condition,
         .after = after,
@@ -108,6 +118,7 @@ fn parseBreakStatement(self: *Parser) !*Statement {
 }
 
 fn parseBlockStatement(self: *Parser) !BlockStatement {
+    const token = self.current_token;
     try self.advanceExpect(.left_brace);
 
     var statements = std.ArrayList(*Statement).init(self.allocator);
@@ -119,7 +130,7 @@ fn parseBlockStatement(self: *Parser) !BlockStatement {
 
     try self.advanceExpect(.right_brace);
 
-    return .{ .statements = statements };
+    return .{ .token = token, .statements = statements };
 }
 
 fn parseExpressionStatement(self: *Parser) !*Statement {
@@ -170,8 +181,13 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
 }
 
 fn parseIdentifier(self: *Parser) !*Expression {
+    const identifier = Identifier{
+        .token = self.current_token,
+        .lexeme = self.current_token.lexeme,
+    };
+
     const expression = try self.allocator.create(Expression);
-    expression.* = .{ .identifier = self.current_token.lexeme };
+    expression.* = .{ .identifier = identifier };
     try self.advance();
     return expression;
 }
@@ -199,11 +215,13 @@ fn parseBoolean(self: *Parser) !*Expression {
 }
 
 fn parsePrefixExpression(self: *Parser) !*Expression {
+    const token = self.current_token;
     const operator = self.current_token.lexeme;
     try self.advance();
     const right = try self.parseExpression(.prefix);
 
     const prefix = PrefixExpression{
+        .token = token,
         .operator = operator,
         .right = right,
     };
@@ -213,8 +231,9 @@ fn parsePrefixExpression(self: *Parser) !*Expression {
 }
 
 fn parseCallExpression(self: *Parser, left: *Expression) !*Expression {
+    const token = self.current_token;
     const args = try self.parseExpressionList(.right_paren);
-    const call = CallExpression{ .function = left, .arguments = args };
+    const call = CallExpression{ .token = token, .function = left, .arguments = args };
 
     const expression = try self.allocator.create(Expression);
     expression.* = .{ .call = call };
@@ -246,11 +265,13 @@ fn parseExpressionList(self: *Parser, end: Token.Kind) !std.ArrayList(*Expressio
 }
 
 fn parseInfixExpression(self: *Parser, left: *Expression) !*Expression {
+    const token = self.current_token;
     const operator = self.current_token.lexeme;
     const precedence = tokenPrecedence(self.current_token.kind);
     try self.advance();
     const right = try self.parseExpression(precedence);
     const infix = InfixExpression{
+        .token = token,
         .left = left,
         .operator = operator,
         .right = right,
@@ -267,6 +288,8 @@ fn parseInfixExpression(self: *Parser, left: *Expression) !*Expression {
 }
 
 fn parseIfExpression(self: *Parser) !*Expression {
+    const token = self.current_token;
+
     try self.advanceExpect(.@"if");
     try self.advanceExpect(.left_paren);
     const condition = try self.parseExpression(.lowest);
@@ -282,6 +305,7 @@ fn parseIfExpression(self: *Parser) !*Expression {
     } else null;
 
     const @"if" = IfExpression{
+        .token = token,
         .condition = condition,
         .consequence = consequence,
         .alternative = alternative,
@@ -300,14 +324,19 @@ pub const Statement = union(enum) {
     block: BlockStatement,
 };
 
-pub const Identifier = []const u8;
+pub const Identifier = struct {
+    token: Token,
+    lexeme: []const u8,
+};
 
 pub const LetStatement = struct {
+    token: Token,
     name: Identifier,
     value: *Expression,
 };
 
 pub const ForStatement = struct {
+    token: Token,
     initial: ?*Statement,
     condition: ?*Expression,
     after: ?*Expression,
@@ -315,6 +344,7 @@ pub const ForStatement = struct {
 };
 
 pub const BlockStatement = struct {
+    token: Token,
     statements: std.ArrayList(*Statement),
 };
 
@@ -330,22 +360,26 @@ pub const Expression = union(enum) {
 };
 
 pub const PrefixExpression = struct {
+    token: Token,
     operator: []const u8,
     right: *Expression,
 };
 
 pub const InfixExpression = struct {
+    token: Token,
     left: *Expression,
     operator: []const u8,
     right: *Expression,
 };
 
 pub const CallExpression = struct {
+    token: Token,
     function: *Expression,
     arguments: std.ArrayList(*Expression),
 };
 
 pub const IfExpression = struct {
+    token: Token,
     condition: *Expression,
     consequence: BlockStatement,
     alternative: ?Alternative,
@@ -391,7 +425,7 @@ test "identifier" {
     var parser = try Parser.init(allocator, &lexer);
 
     const statement = try parser.next();
-    try std.testing.expectEqualStrings("foobar", statement.?.expression.identifier);
+    try std.testing.expectEqualStrings("foobar", statement.?.expression.identifier.lexeme);
 }
 
 test "integer" {
@@ -430,7 +464,7 @@ test "let" {
     var parser = try Parser.init(allocator, &lexer);
 
     const statement = try parser.next();
-    try std.testing.expectEqualStrings("foo", statement.?.let.name);
+    try std.testing.expectEqualStrings("foo", statement.?.let.name.lexeme);
     try std.testing.expectEqual(5.0, statement.?.let.value.number);
 }
 
@@ -444,7 +478,7 @@ test "print" {
     var parser = try Parser.init(allocator, &lexer);
 
     const statement = try parser.next();
-    try std.testing.expectEqualStrings("print", statement.?.expression.call.function.identifier);
+    try std.testing.expectEqualStrings("print", statement.?.expression.call.function.identifier.lexeme);
     try std.testing.expectEqual(1, statement.?.expression.call.arguments.items.len);
     try std.testing.expectEqualStrings("foo bar", statement.?.expression.call.arguments.items[0].string);
 
@@ -566,7 +600,7 @@ test "for with condition" {
     const @"for" = statement.?.@"for";
 
     const condition = @"for".condition.?.infix;
-    try std.testing.expectEqualStrings("x", condition.left.identifier);
+    try std.testing.expectEqualStrings("x", condition.left.identifier.lexeme);
     try std.testing.expectEqualStrings(">", condition.operator);
     try std.testing.expectEqual(10.0, condition.right.number);
 
@@ -574,7 +608,7 @@ test "for with condition" {
     try std.testing.expectEqual(1, block.statements.items.len);
 
     const block_infix = block.statements.items[0].expression.infix;
-    try std.testing.expectEqualStrings("x", block_infix.left.identifier);
+    try std.testing.expectEqualStrings("x", block_infix.left.identifier.lexeme);
     try std.testing.expectEqualStrings("-=", block_infix.operator);
     try std.testing.expectEqual(1.0, block_infix.right.number);
 }
@@ -592,16 +626,16 @@ test "for traditional" {
     const @"for" = statement.?.@"for";
 
     const initial = @"for".initial.?;
-    try std.testing.expectEqualStrings("i", initial.let.name);
+    try std.testing.expectEqualStrings("i", initial.let.name.lexeme);
     try std.testing.expectEqual(0, initial.let.value.number);
 
     const condition = @"for".condition.?.infix;
-    try std.testing.expectEqualStrings("i", condition.left.identifier);
+    try std.testing.expectEqualStrings("i", condition.left.identifier.lexeme);
     try std.testing.expectEqualStrings("<", condition.operator);
     try std.testing.expectEqual(3, condition.right.number);
 
     const after = @"for".after.?.infix;
-    try std.testing.expectEqualStrings("i", after.left.identifier);
+    try std.testing.expectEqualStrings("i", after.left.identifier.lexeme);
     try std.testing.expectEqualStrings("+=", after.operator);
     try std.testing.expectEqual(1, after.right.number);
 
@@ -626,9 +660,9 @@ test "if/else" {
 
     const consequence = @"if".consequence;
     try std.testing.expectEqual(1, consequence.statements.items.len);
-    try std.testing.expectEqualStrings("x", consequence.statements.items[0].expression.identifier);
+    try std.testing.expectEqualStrings("x", consequence.statements.items[0].expression.identifier.lexeme);
 
     const alternative = @"if".alternative.?.block;
     try std.testing.expectEqual(1, alternative.statements.items.len);
-    try std.testing.expectEqualStrings("y", alternative.statements.items[0].expression.identifier);
+    try std.testing.expectEqualStrings("y", alternative.statements.items[0].expression.identifier.lexeme);
 }

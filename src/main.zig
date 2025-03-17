@@ -18,6 +18,12 @@ pub fn main() !void {
     _ = args.next();
     if (args.next()) |file_path| {
         try runFile(allocator, file_path);
+        _ = arena.reset(.free_all);
+
+        while (args.next()) |path| {
+            try runFile(allocator, path);
+            _ = arena.reset(.free_all);
+        }
     } else {
         try runREPL(allocator);
     }

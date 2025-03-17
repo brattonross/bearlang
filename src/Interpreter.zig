@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Parser = @import("./Parser.zig");
+const Identifier = Parser.Identifier;
 
 // expressions
 const Expression = Parser.Expression;
@@ -53,7 +54,7 @@ fn evalLetStatement(self: *Interpreter, let: LetStatement) !Value {
         return error.InvalidLetStatement;
     }
 
-    try self.environment.set(let.name, value);
+    try self.environment.set(let.name.lexeme, value);
     return .{ .void = {} };
 }
 
@@ -112,8 +113,8 @@ fn evalExpression(self: *Interpreter, expression: Expression) anyerror!Value {
     };
 }
 
-fn evalIdentifier(self: *Interpreter, identifier: []const u8) !Value {
-    return self.environment.get(identifier) orelse error.UnknownIdentifier;
+fn evalIdentifier(self: *Interpreter, identifier: Identifier) !Value {
+    return self.environment.get(identifier.lexeme) orelse error.UnknownIdentifier;
 }
 
 fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !Value {
@@ -150,7 +151,7 @@ fn evalInfixExpression(self: *Interpreter, infix: InfixExpression) !Value {
     } else if (left == .number and right == .number) {
         const value = try evalNumberInfixExpression(infix.operator, left.number, right.number);
         if (isAssignmentInfixExpression(infix)) {
-            try self.environment.set(infix.left.identifier, value);
+            try self.environment.set(infix.left.identifier.lexeme, value);
         }
         return value;
     } else if (left == .boolean and right == .boolean) {
@@ -219,7 +220,7 @@ fn evalCallExpression(self: *Interpreter, call: CallExpression) !Value {
     var stdout = std.io.getStdOut().writer();
 
     const fn_name = call.function.identifier;
-    if (std.mem.eql(u8, "print", fn_name)) {
+    if (std.mem.eql(u8, "print", fn_name.lexeme)) {
         for (call.arguments.items) |arg| {
             const value = try self.evalExpression(arg.*);
             if (value == .void) {
