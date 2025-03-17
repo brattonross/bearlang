@@ -203,17 +203,19 @@ fn evalBooleanInfixExpression(operator: []const u8, left: bool, right: bool) !Va
 }
 
 fn evalCallExpression(self: *Interpreter, call: CallExpression) !?Value {
+    var stdout = std.io.getStdOut().writer();
+
     const fn_name = call.function.identifier;
     if (std.mem.eql(u8, "print", fn_name)) {
         for (call.arguments.items) |arg| {
             const value = try self.evalExpression(arg.*);
             if (value) |v| {
-                try std.io.getStdOut().writer().print("{}", .{v});
+                try stdout.print("{}", .{v});
             } else {
-                try std.io.getStdOut().writeAll("nil");
+                try stdout.writeAll("nil");
             }
         }
-        try std.io.getStdOut().writeAll("\n");
+        try stdout.writeAll("\n");
         return null;
     } else {
         std.debug.panic("calling non-builtin functions is not implemented", .{});
@@ -247,7 +249,7 @@ const Value = union(enum) {
 
         switch (self) {
             .string => try writer.writeAll(self.string),
-            .number => try writer.print("{}", .{self.number}),
+            .number => try writer.print("{d}", .{self.number}),
             .boolean => try writer.print("{}", .{self.boolean}),
         }
     }
