@@ -68,17 +68,30 @@ fn parseLetStatement(self: *Parser) !*Statement {
 fn parseForStatement(self: *Parser) !*Statement {
     try self.advance(); // advance past `for`
 
+    var initial: ?*Statement = null;
     var condition: ?*Expression = null;
+    var after: ?*Expression = null;
+
     if (self.current_token.kind == .left_paren) {
         try self.advanceExpect(.left_paren);
-        condition = try self.parseExpression(.lowest);
+        if (self.current_token.kind == .let) {
+            initial = try self.parseStatement();
+            try self.advanceExpect(.semicolon);
+            condition = try self.parseExpression(.lowest);
+            try self.advanceExpect(.semicolon);
+            after = try self.parseExpression(.lowest);
+        } else {
+            condition = try self.parseExpression(.lowest);
+        }
         try self.advanceExpect(.right_paren);
     }
 
     const block = try self.parseBlockStatement();
 
     const @"for" = ForStatement{
+        .initial = initial,
         .condition = condition,
+        .after = after,
         .block = block,
     };
 
@@ -265,7 +278,9 @@ pub const LetStatement = struct {
 };
 
 pub const ForStatement = struct {
+    initial: ?*Statement,
     condition: ?*Expression,
+    after: ?*Expression,
     block: BlockStatement,
 };
 
@@ -520,4 +535,34 @@ test "for with condition" {
     try std.testing.expectEqualStrings("x", block_infix.left.identifier);
     try std.testing.expectEqualStrings("-=", block_infix.operator);
     try std.testing.expectEqual(1.0, block_infix.right.number);
+}
+
+test "for traditional" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("for (let i = 0; i < 3; i += 1) {}");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const @"for" = statement.?.@"for";
+
+    const initial = @"for".initial.?;
+    try std.testing.expectEqualStrings("i", initial.let.name);
+    try std.testing.expectEqual(0, initial.let.value.number);
+
+    const condition = @"for".condition.?.infix;
+    try std.testing.expectEqualStrings("i", condition.left.identifier);
+    try std.testing.expectEqualStrings("<", condition.operator);
+    try std.testing.expectEqual(3, condition.right.number);
+
+    const after = @"for".after.?.infix;
+    try std.testing.expectEqualStrings("i", after.left.identifier);
+    try std.testing.expectEqualStrings("+=", after.operator);
+    try std.testing.expectEqual(1, after.right.number);
+
+    const block = @"for".block;
+    try std.testing.expectEqual(0, block.statements.items.len);
 }

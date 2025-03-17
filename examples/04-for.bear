@@ -3,3 +3,12 @@ for (x > 0) {
     print(x)
     x -= 1
 }
+
+for (let i = 0; i < 3; i += 1) {
+    print("iter ", i)
+}
+
+for {
+    print("hello")
+    break
+}

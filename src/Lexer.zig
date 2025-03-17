@@ -36,6 +36,7 @@ pub const Token = struct {
         left_brace, // {
         right_brace, // }
         comma, // ,
+        semicolon, // ;
 
         let,
         @"for",
@@ -137,6 +138,7 @@ pub fn nextToken(self: *Lexer) !Token {
         '{' => token.kind = .left_brace,
         '}' => token.kind = .right_brace,
         ',' => token.kind = .comma,
+        ';' => token.kind = .semicolon,
         '"' => return self.scanString(),
         else => {
             if (isAlpha(current)) {

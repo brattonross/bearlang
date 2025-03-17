@@ -57,6 +57,12 @@ fn evalLetStatement(self: *Interpreter, let: LetStatement) !?Value {
 
 fn evalForStatement(self: *Interpreter, statement: ForStatement) !?Value {
     var value: ?Value = null;
+
+    if (statement.initial) |initial| {
+        // TODO: ignored? probably should check that this is null/void
+        _ = try self.evalStatement(initial.*);
+    }
+
     while (true) {
         const should_iter = if (statement.condition) |condition| isTruthy(try self.evalExpression(condition.*)) else true;
         if (should_iter) {
@@ -64,6 +70,10 @@ fn evalForStatement(self: *Interpreter, statement: ForStatement) !?Value {
             if (value) |v| if (v == .@"break") break;
         } else {
             break;
+        }
+
+        if (statement.after) |after| {
+            _ = try self.evalExpression(after.*);
         }
     }
     return value;
