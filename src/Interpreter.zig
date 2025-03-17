@@ -43,7 +43,7 @@ fn evalStatement(self: *Interpreter, statement: Statement) anyerror!Value {
         .@"for" => try self.evalForStatement(statement.@"for"),
         .block => try self.evalBlockStatement(statement.block),
         .expression => try self.evalExpression(statement.expression.*),
-        .@"break" => evalBreakStatement(),
+        else => .{ .void = {} },
     };
 }
 
@@ -58,18 +58,20 @@ fn evalLetStatement(self: *Interpreter, let: LetStatement) !Value {
 }
 
 fn evalForStatement(self: *Interpreter, statement: ForStatement) !Value {
-    var value = Value{ .void = {} };
-
     if (statement.initial) |initial| {
-        // TODO: ignored? probably should check that this is null/void
+        // TODO: ignored?
         _ = try self.evalStatement(initial.*);
     }
 
-    while (true) {
+    for_loop: while (true) {
         const should_iter = if (statement.condition) |condition| isTruthy(try self.evalExpression(condition.*)) else true;
         if (should_iter) {
-            value = try self.evalBlockStatement(statement.block);
-            if (value == .@"break") break;
+            for (statement.block.statements.items) |s| {
+                if (s.* == .@"break") {
+                    break :for_loop;
+                }
+                _ = try self.evalStatement(s.*);
+            }
         } else {
             break;
         }
@@ -78,27 +80,23 @@ fn evalForStatement(self: *Interpreter, statement: ForStatement) !Value {
             _ = try self.evalExpression(after.*);
         }
     }
-    return value;
-}
 
-fn evalBreakStatement() Value {
-    return .{ .@"break" = {} };
+    return .{ .void = {} };
 }
 
 fn evalBlockStatement(self: *Interpreter, block: BlockStatement) !Value {
     var value = Value{ .void = {} };
     for (block.statements.items) |statement| {
         value = try self.evalStatement(statement.*);
-        if (value == .@"break") break;
     }
     return value;
 }
 
-fn isTruthy(exp: ?Value) bool {
-    return if (exp) |e| switch (e) {
-        .boolean => e.boolean == true,
+fn isTruthy(exp: Value) bool {
+    return switch (exp) {
+        .boolean => exp.boolean == true,
         else => true,
-    } else false;
+    };
 }
 
 fn evalExpression(self: *Interpreter, expression: Expression) anyerror!Value {
@@ -132,7 +130,6 @@ fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !Value {
 fn evalBangOperatorExpression(right: Value) !Value {
     return switch (right) {
         .boolean => .{ .boolean = !right.boolean },
-        .@"break" => error.UnknownPrefixOperator,
         else => .{ .boolean = false },
     };
 }
@@ -225,9 +222,10 @@ fn evalCallExpression(self: *Interpreter, call: CallExpression) !Value {
     if (std.mem.eql(u8, "print", fn_name)) {
         for (call.arguments.items) |arg| {
             const value = try self.evalExpression(arg.*);
-            if (value != .@"break" and value != .void) {
-                try stdout.print("{}", .{value});
+            if (value == .void) {
+                return error.InvalidArgument;
             }
+            try stdout.print("{}", .{value});
         }
         try stdout.writeAll("\n");
         return .{ .void = {} };
@@ -267,7 +265,6 @@ pub const Value = union(enum) {
     string: []const u8,
     number: f64,
     boolean: bool,
-    @"break": void,
     void: void,
 
     pub fn format(self: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {

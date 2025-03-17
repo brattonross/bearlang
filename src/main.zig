@@ -32,7 +32,9 @@ fn runREPL(allocator: Allocator) !void {
         try stdout.writeAll(">> ");
         if (try stdin.readUntilDelimiterOrEofAlloc(allocator, '\n', 1024)) |src| {
             const value = try runSrc(allocator, src, &env);
-            try stdout.print("{?}\n", .{value});
+            if (value != .void) {
+                try stdout.print("{}\n", .{value});
+            }
         }
     }
 }
@@ -44,7 +46,7 @@ fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
     _ = try runSrc(allocator, src, &env);
 }
 
-fn runSrc(allocator: Allocator, src: []const u8, env: *Environment) !?Interpreter.Value {
+fn runSrc(allocator: Allocator, src: []const u8, env: *Environment) !Interpreter.Value {
     var lexer = Lexer.init(src);
     var parser = try Parser.init(allocator, &lexer);
     var interpreter = Interpreter.init(allocator, &parser, env);
