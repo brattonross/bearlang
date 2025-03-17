@@ -137,6 +137,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
         .string => try self.parseString(),
         .true, .false => try self.parseBoolean(),
         .bang, .minus => try self.parsePrefixExpression(),
+        .@"if" => try self.parseIfExpression(),
         else => return error.InvalidExpression,
     };
 
@@ -156,6 +157,9 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
             .minus,
             .minus_equals,
             .slash,
+            .slash_equals,
+            .modulo,
+            .modulo_equals,
             => try self.parseInfixExpression(left),
             .left_paren => try self.parseCallExpression(left),
             else => break,
@@ -262,6 +266,28 @@ fn parseInfixExpression(self: *Parser, left: *Expression) !*Expression {
     return expression;
 }
 
+fn parseIfExpression(self: *Parser) !*Expression {
+    try self.advanceExpect(.@"if");
+    try self.advanceExpect(.left_paren);
+    const condition = try self.parseExpression(.lowest);
+    try self.advanceExpect(.right_paren);
+    const consequence = try self.parseBlockStatement();
+    const alternative = if (self.current_token.kind == .@"else") blk: {
+        try self.advanceExpect(.@"else");
+        break :blk try self.parseBlockStatement();
+    } else null;
+
+    const @"if" = IfExpression{
+        .condition = condition,
+        .consequence = consequence,
+        .alternative = alternative,
+    };
+
+    const expression = try self.allocator.create(Expression);
+    expression.* = .{ .@"if" = @"if" };
+    return expression;
+}
+
 pub const Statement = union(enum) {
     let: LetStatement,
     expression: *Expression,
@@ -296,6 +322,7 @@ pub const Expression = union(enum) {
     prefix: PrefixExpression,
     infix: InfixExpression,
     call: CallExpression,
+    @"if": IfExpression,
 };
 
 pub const PrefixExpression = struct {
@@ -312,6 +339,12 @@ pub const InfixExpression = struct {
 pub const CallExpression = struct {
     function: *Expression,
     arguments: std.ArrayList(*Expression),
+};
+
+pub const IfExpression = struct {
+    condition: *Expression,
+    consequence: BlockStatement,
+    alternative: ?BlockStatement,
 };
 
 const Precedence = enum {
@@ -333,7 +366,7 @@ fn tokenPrecedence(kind: Token.Kind) Precedence {
         .equals, .not_equals => .equals,
         .less_than, .less_than_equals, .greater_than, .greater_than_equals => .less_greater,
         .plus, .plus_equals, .minus, .minus_equals => .sum,
-        .slash, .slash_equals, .asterisk, .asterisk_equals => .product,
+        .slash, .slash_equals, .asterisk, .asterisk_equals, .modulo, .modulo_equals => .product,
         .left_paren => .call,
         else => .lowest,
     };
@@ -565,4 +598,28 @@ test "for traditional" {
 
     const block = @"for".block;
     try std.testing.expectEqual(0, block.statements.items.len);
+}
+
+test "if/else" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("if (true) { x } else { y }");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const @"if" = statement.?.expression.@"if";
+
+    const condition = @"if".condition;
+    try std.testing.expectEqual(true, condition.boolean);
+
+    const consequence = @"if".consequence;
+    try std.testing.expectEqual(1, consequence.statements.items.len);
+    try std.testing.expectEqualStrings("x", consequence.statements.items[0].expression.identifier);
+
+    const alternative = @"if".alternative.?;
+    try std.testing.expectEqual(1, alternative.statements.items.len);
+    try std.testing.expectEqualStrings("y", alternative.statements.items[0].expression.identifier);
 }

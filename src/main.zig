@@ -14,19 +14,18 @@ pub fn main() !void {
 
     const allocator = arena.allocator();
 
-    const stdout = std.io.getStdOut().writer().any();
-    const stdin = std.io.getStdIn().reader().any();
-
     var args = try std.process.argsWithAllocator(allocator);
     _ = args.next();
     if (args.next()) |file_path| {
-        try runFile(allocator, stdout, file_path);
+        try runFile(allocator, file_path);
     } else {
-        try runREPL(allocator, stdin, stdout);
+        try runREPL(allocator);
     }
 }
 
-fn runREPL(allocator: Allocator, stdin: std.io.AnyReader, stdout: std.io.AnyWriter) !void {
+fn runREPL(allocator: Allocator) !void {
+    const stdout = std.io.getStdOut().writer();
+    const stdin = std.io.getStdIn().reader();
     var env = Environment.init(allocator);
 
     while (true) {
@@ -38,12 +37,11 @@ fn runREPL(allocator: Allocator, stdin: std.io.AnyReader, stdout: std.io.AnyWrit
     }
 }
 
-fn runFile(allocator: Allocator, stdout: std.io.AnyWriter, file_path: [:0]const u8) !void {
+fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
     var cwd = std.fs.cwd();
     const src = try cwd.readFileAlloc(allocator, file_path, 1024);
     var env = Environment.init(allocator);
-    const value = try runSrc(allocator, src, &env);
-    try stdout.print("{?}\n", .{value});
+    _ = try runSrc(allocator, src, &env);
 }
 
 fn runSrc(allocator: Allocator, src: []const u8, env: *Environment) !?Interpreter.Value {

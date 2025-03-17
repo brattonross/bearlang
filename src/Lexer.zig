@@ -16,6 +16,7 @@ pub const Token = struct {
         plus, // +
         minus, // -
         equals, // ==
+        bang, // !
         not_equals, // !=
         plus_equals, // +=
         minus_equals, // -=
@@ -27,7 +28,8 @@ pub const Token = struct {
         asterisk_equals, // *=
         slash, // /
         slash_equals, // /=
-        bang, // !
+        modulo, // %
+        modulo_equals, // %=
         @"and",
         @"or",
 
@@ -43,6 +45,8 @@ pub const Token = struct {
         @"break",
         true,
         false,
+        @"if",
+        @"else",
     };
 };
 
@@ -133,6 +137,14 @@ pub fn nextToken(self: *Lexer) !Token {
                 token.kind = .slash;
             }
         },
+        '%' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .modulo_equals;
+                self.advance();
+            } else {
+                token.kind = .modulo;
+            }
+        },
         '(' => token.kind = .left_paren,
         ')' => token.kind = .right_paren,
         '{' => token.kind = .left_brace,
@@ -183,6 +195,10 @@ fn scanIdentifier(self: *Lexer) Token {
         kind = .@"for";
     } else if (std.mem.eql(u8, "break", lexeme)) {
         kind = .@"break";
+    } else if (std.mem.eql(u8, "if", lexeme)) {
+        kind = .@"if";
+    } else if (std.mem.eql(u8, "else", lexeme)) {
+        kind = .@"else";
     }
 
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };

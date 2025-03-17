@@ -7,6 +7,7 @@ const Expression = Parser.Expression;
 const PrefixExpression = Parser.PrefixExpression;
 const InfixExpression = Parser.InfixExpression;
 const CallExpression = Parser.CallExpression;
+const IfExpression = Parser.IfExpression;
 
 // statements
 const Statement = Parser.Statement;
@@ -108,6 +109,7 @@ fn evalExpression(self: *Interpreter, expression: Expression) anyerror!?Value {
         .prefix => try self.evalPrefixExpression(expression.prefix),
         .infix => try self.evalInfixExpression(expression.infix),
         .call => try self.evalCallExpression(expression.call),
+        .@"if" => try self.evalIfExpression(expression.@"if"),
     };
 }
 
@@ -192,6 +194,10 @@ fn evalNumberInfixExpression(operator: []const u8, left: f64, right: f64) !Value
         return .{ .number = left * right };
     } else if (std.mem.eql(u8, "/", operator) or std.mem.eql(u8, "/=", operator)) {
         return .{ .number = left / right };
+    } else if (std.mem.eql(u8, "==", operator)) {
+        return .{ .boolean = left == right };
+    } else if (std.mem.eql(u8, "!=", operator)) {
+        return .{ .boolean = left != right };
     } else if (std.mem.eql(u8, "<", operator)) {
         return .{ .boolean = left < right };
     } else if (std.mem.eql(u8, "<=", operator)) {
@@ -200,6 +206,8 @@ fn evalNumberInfixExpression(operator: []const u8, left: f64, right: f64) !Value
         return .{ .boolean = left > right };
     } else if (std.mem.eql(u8, ">=", operator)) {
         return .{ .boolean = left >= right };
+    } else if (std.mem.eql(u8, "%", operator) or std.mem.eql(u8, "%=", operator)) {
+        return .{ .number = @mod(left, right) };
     } else {
         std.log.err("unhandled number infix operator `{s}`", .{operator});
         return error.InfixUnknownOperator;
@@ -233,6 +241,16 @@ fn evalCallExpression(self: *Interpreter, call: CallExpression) !?Value {
         return null;
     } else {
         std.debug.panic("calling non-builtin functions is not implemented", .{});
+    }
+}
+
+fn evalIfExpression(self: *Interpreter, ife: IfExpression) !?Value {
+    if (isTruthy(try self.evalExpression(ife.condition.*))) {
+        return try self.evalBlockStatement(ife.consequence);
+    } else if (ife.alternative) |alt| {
+        return try self.evalBlockStatement(alt);
+    } else {
+        return null;
     }
 }
 
