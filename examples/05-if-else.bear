@@ -3,3 +3,16 @@ if (7 % 2 == 0) {
 } else {
     print("7 is odd")
 }
+
+if (8 % 2 == 0 or 7 % 2 == 0) {
+    print("either 8 or 7 are even")
+}
+
+let x = 9
+if (x < 0) {
+    print(x, " is negative")
+} else if (x < 10) {
+    print(x, " has 1 digit")
+} else {
+    print(x, " has multiple digits")
+}

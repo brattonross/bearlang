@@ -272,9 +272,13 @@ fn parseIfExpression(self: *Parser) !*Expression {
     const condition = try self.parseExpression(.lowest);
     try self.advanceExpect(.right_paren);
     const consequence = try self.parseBlockStatement();
-    const alternative = if (self.current_token.kind == .@"else") blk: {
+    const alternative: ?IfExpression.Alternative = if (self.current_token.kind == .@"else") blk: {
         try self.advanceExpect(.@"else");
-        break :blk try self.parseBlockStatement();
+        if (self.current_token.kind == .@"if") {
+            break :blk .{ .expression = try self.parseIfExpression() };
+        } else {
+            break :blk .{ .block = try self.parseBlockStatement() };
+        }
     } else null;
 
     const @"if" = IfExpression{
@@ -344,7 +348,12 @@ pub const CallExpression = struct {
 pub const IfExpression = struct {
     condition: *Expression,
     consequence: BlockStatement,
-    alternative: ?BlockStatement,
+    alternative: ?Alternative,
+
+    pub const Alternative = union(enum) {
+        block: BlockStatement, // else block
+        expression: *Expression, // else if expression
+    };
 };
 
 const Precedence = enum {

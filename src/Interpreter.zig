@@ -247,8 +247,9 @@ fn evalCallExpression(self: *Interpreter, call: CallExpression) !?Value {
 fn evalIfExpression(self: *Interpreter, ife: IfExpression) !?Value {
     if (isTruthy(try self.evalExpression(ife.condition.*))) {
         return try self.evalBlockStatement(ife.consequence);
-    } else if (ife.alternative) |alt| {
-        return try self.evalBlockStatement(alt);
+    } else if (ife.alternative) |alt| switch (alt) {
+        .block => return try self.evalBlockStatement(alt.block),
+        .expression => return try self.evalIfExpression(alt.expression.@"if"),
     } else {
         return null;
     }
