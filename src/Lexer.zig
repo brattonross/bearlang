@@ -38,7 +38,8 @@ pub const Token = struct {
         comma, // ,
 
         let,
-        @"while",
+        @"for",
+        @"break",
         true,
         false,
     };
@@ -176,8 +177,10 @@ fn scanIdentifier(self: *Lexer) Token {
         kind = .@"and";
     } else if (std.mem.eql(u8, "or", lexeme)) {
         kind = .@"or";
-    } else if (std.mem.eql(u8, "while", lexeme)) {
-        kind = .@"while";
+    } else if (std.mem.eql(u8, "for", lexeme)) {
+        kind = .@"for";
+    } else if (std.mem.eql(u8, "break", lexeme)) {
+        kind = .@"break";
     }
 
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };
@@ -430,11 +433,20 @@ test "minus equals" {
     try std.testing.expectEqualStrings("-=", token.lexeme);
 }
 
-test "while" {
-    var lexer = Lexer.init("while");
+test "for" {
+    var lexer = Lexer.init("for");
 
     const token = try lexer.nextToken();
-    try std.testing.expectEqual(.@"while", token.kind);
+    try std.testing.expectEqual(.@"for", token.kind);
     try std.testing.expectEqual(1, token.line);
-    try std.testing.expectEqualStrings("while", token.lexeme);
+    try std.testing.expectEqualStrings("for", token.lexeme);
+}
+
+test "break" {
+    var lexer = Lexer.init("break");
+
+    const token = try lexer.nextToken();
+    try std.testing.expectEqual(.@"break", token.kind);
+    try std.testing.expectEqual(1, token.line);
+    try std.testing.expectEqualStrings("break", token.lexeme);
 }

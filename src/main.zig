@@ -14,39 +14,43 @@ pub fn main() !void {
 
     const allocator = arena.allocator();
 
+    const stdout = std.io.getStdOut().writer().any();
+    const stdin = std.io.getStdIn().reader().any();
+
     var args = try std.process.argsWithAllocator(allocator);
     _ = args.next();
     if (args.next()) |file_path| {
-        try runFile(allocator, file_path);
+        try runFile(allocator, stdout, file_path);
     } else {
-        try runREPL(allocator);
+        try runREPL(allocator, stdin, stdout);
     }
 }
 
-fn runREPL(allocator: Allocator) !void {
-    var stdout = std.io.getStdOut().writer();
-    var stdin = std.io.getStdIn().reader();
+fn runREPL(allocator: Allocator, stdin: std.io.AnyReader, stdout: std.io.AnyWriter) !void {
+    var env = Environment.init(allocator);
 
     while (true) {
         try stdout.writeAll(">> ");
         if (try stdin.readUntilDelimiterOrEofAlloc(allocator, '\n', 1024)) |src| {
-            try runSrc(allocator, src);
+            const value = try runSrc(allocator, src, &env);
+            try stdout.print("{?}\n", .{value});
         }
     }
 }
 
-fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
+fn runFile(allocator: Allocator, stdout: std.io.AnyWriter, file_path: [:0]const u8) !void {
     var cwd = std.fs.cwd();
     const src = try cwd.readFileAlloc(allocator, file_path, 1024);
-    try runSrc(allocator, src);
+    var env = Environment.init(allocator);
+    const value = try runSrc(allocator, src, &env);
+    try stdout.print("{?}\n", .{value});
 }
 
-fn runSrc(allocator: Allocator, src: []const u8) !void {
+fn runSrc(allocator: Allocator, src: []const u8, env: *Environment) !?Interpreter.Value {
     var lexer = Lexer.init(src);
     var parser = try Parser.init(allocator, &lexer);
-    var env = Environment.init(allocator);
-    var interpreter = Interpreter.init(allocator, &parser, &env);
-    _ = try interpreter.run();
+    var interpreter = Interpreter.init(allocator, &parser, env);
+    return try interpreter.run();
 }
 
 test {

@@ -27,10 +27,21 @@ fn advance(self: *Parser) !void {
     self.current_token = try self.lexer.nextToken();
 }
 
+/// If the current token kind matches, advance the parser, else return an error.
+fn advanceExpect(self: *Parser, expected: Token.Kind) !void {
+    if (self.current_token.kind == expected) {
+        try self.advance();
+    } else {
+        std.log.err("expected next token to be {}, got {}\n", .{ expected, self.current_token.kind });
+        return error.UnexpectedToken;
+    }
+}
+
 fn parseStatement(self: *Parser) !*Statement {
     return switch (self.current_token.kind) {
         .let => self.parseLetStatement(),
-        .@"while" => self.parseWhileStatement(),
+        .@"for" => self.parseForStatement(),
+        .@"break" => self.parseBreakStatement(),
         else => self.parseExpressionStatement(),
     };
 }
@@ -54,27 +65,37 @@ fn parseLetStatement(self: *Parser) !*Statement {
     return statement;
 }
 
-fn parseWhileStatement(self: *Parser) !*Statement {
-    try self.advance(); // advance past `while`
+fn parseForStatement(self: *Parser) !*Statement {
+    try self.advance(); // advance past `for`
 
-    try self.expectAdvance(.left_paren);
-    const condition = try self.parseExpression(.lowest);
-    try self.expectAdvance(.right_paren);
+    var condition: ?*Expression = null;
+    if (self.current_token.kind == .left_paren) {
+        try self.advanceExpect(.left_paren);
+        condition = try self.parseExpression(.lowest);
+        try self.advanceExpect(.right_paren);
+    }
 
     const block = try self.parseBlockStatement();
 
-    const @"while" = WhileStatement{
+    const @"for" = ForStatement{
         .condition = condition,
         .block = block,
     };
 
     const statement = try self.allocator.create(Statement);
-    statement.* = .{ .@"while" = @"while" };
+    statement.* = .{ .@"for" = @"for" };
+    return statement;
+}
+
+fn parseBreakStatement(self: *Parser) !*Statement {
+    const statement = try self.allocator.create(Statement);
+    statement.* = .{ .@"break" = {} };
+    try self.advance();
     return statement;
 }
 
 fn parseBlockStatement(self: *Parser) !BlockStatement {
-    try self.expectAdvance(.left_brace);
+    try self.advanceExpect(.left_brace);
 
     var statements = std.ArrayList(*Statement).init(self.allocator);
 
@@ -83,7 +104,7 @@ fn parseBlockStatement(self: *Parser) !BlockStatement {
         try statements.append(statement);
     }
 
-    try self.expectAdvance(.right_brace);
+    try self.advanceExpect(.right_brace);
 
     return .{ .statements = statements };
 }
@@ -228,20 +249,11 @@ fn parseInfixExpression(self: *Parser, left: *Expression) !*Expression {
     return expression;
 }
 
-/// If the current token kind matches, advance the parser, else return an error.
-fn expectAdvance(self: *Parser, expected: Token.Kind) !void {
-    if (self.current_token.kind == expected) {
-        try self.advance();
-    } else {
-        std.log.err("expected next token to be {}, got {}\n", .{ expected, self.current_token.kind });
-        return error.UnexpectedToken;
-    }
-}
-
 pub const Statement = union(enum) {
     let: LetStatement,
     expression: *Expression,
-    @"while": WhileStatement,
+    @"for": ForStatement,
+    @"break": void,
     block: BlockStatement,
 };
 
@@ -252,8 +264,8 @@ pub const LetStatement = struct {
     value: *Expression,
 };
 
-pub const WhileStatement = struct {
-    condition: *Expression,
+pub const ForStatement = struct {
+    condition: ?*Expression,
     block: BlockStatement,
 };
 
@@ -461,24 +473,47 @@ test "greater than" {
     try std.testing.expectEqual(3.0, infix.right.number);
 }
 
-test "while" {
+test "for without condition" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
     const allocator = arena.allocator();
 
-    var lexer = Lexer.init("while (x > 10) { x -= 1 }");
+    var lexer = Lexer.init(
+        \\for {
+        \\  break
+        \\}
+    );
     var parser = try Parser.init(allocator, &lexer);
 
     const statement = try parser.next();
-    const @"while" = statement.?.@"while";
+    const @"for" = statement.?.@"for";
 
-    const condition = @"while".condition.infix;
+    try std.testing.expectEqual(null, @"for".condition);
+
+    const block = @"for".block;
+    try std.testing.expectEqual(1, block.statements.items.len);
+    try std.testing.expectEqual(.@"break", block.statements.items[0].*);
+}
+
+test "for with condition" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("for (x > 10) { x -= 1 }");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const @"for" = statement.?.@"for";
+
+    const condition = @"for".condition.?.infix;
     try std.testing.expectEqualStrings("x", condition.left.identifier);
     try std.testing.expectEqualStrings(">", condition.operator);
     try std.testing.expectEqual(10.0, condition.right.number);
 
-    const block = @"while".block;
+    const block = @"for".block;
     try std.testing.expectEqual(1, block.statements.items.len);
 
     const block_infix = block.statements.items[0].expression.infix;

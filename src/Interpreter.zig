@@ -11,7 +11,7 @@ const CallExpression = Parser.CallExpression;
 // statements
 const Statement = Parser.Statement;
 const LetStatement = Parser.LetStatement;
-const WhileStatement = Parser.WhileStatement;
+const ForStatement = Parser.ForStatement;
 const BlockStatement = Parser.BlockStatement;
 
 const Interpreter = @This();
@@ -39,9 +39,10 @@ pub fn run(self: *Interpreter) !?Value {
 fn evalStatement(self: *Interpreter, statement: Statement) anyerror!?Value {
     return switch (statement) {
         .let => try self.evalLetStatement(statement.let),
-        .@"while" => try self.evalWhileStatement(statement.@"while"),
+        .@"for" => try self.evalForStatement(statement.@"for"),
         .block => try self.evalBlockStatement(statement.block),
         .expression => try self.evalExpression(statement.expression.*),
+        .@"break" => evalBreakStatement(),
     };
 }
 
@@ -54,29 +55,31 @@ fn evalLetStatement(self: *Interpreter, let: LetStatement) !?Value {
     }
 }
 
-fn evalWhileStatement(self: *Interpreter, statement: WhileStatement) !?Value {
+fn evalForStatement(self: *Interpreter, statement: ForStatement) !?Value {
+    var value: ?Value = null;
     while (true) {
-        const condition = try self.evalExpression(statement.condition.*);
-        if (isTruthy(condition)) {
-            // TODO: consider `break` and `return`
-            _ = try self.evalBlockStatement(statement.block);
+        const should_iter = if (statement.condition) |condition| isTruthy(try self.evalExpression(condition.*)) else true;
+        if (should_iter) {
+            value = try self.evalBlockStatement(statement.block);
+            if (value) |v| if (v == .@"break") break;
         } else {
             break;
         }
     }
+    return value;
+}
 
-    // TODO: could be treated as an expression
-    return null;
+fn evalBreakStatement() Value {
+    return .{ .@"break" = {} };
 }
 
 fn evalBlockStatement(self: *Interpreter, block: BlockStatement) !?Value {
+    var value: ?Value = null;
     for (block.statements.items) |statement| {
-        // TODO: consider `break` and `return`
-        _ = try self.evalStatement(statement.*);
+        value = try self.evalStatement(statement.*);
+        if (value) |v| if (v == .@"break") break;
     }
-
-    // TODO: could be treated as an expression
-    return null;
+    return value;
 }
 
 fn isTruthy(exp: ?Value) bool {
@@ -105,7 +108,7 @@ fn evalIdentifier(self: *Interpreter, identifier: []const u8) ?Value {
 fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !?Value {
     const right = try self.evalExpression(prefix.right.*);
     if (std.mem.eql(u8, "!", prefix.operator)) {
-        return evalBangOperatorExpression(right);
+        return try evalBangOperatorExpression(right);
     } else if (std.mem.eql(u8, "-", prefix.operator)) {
         return try evalMinusPrefixOperatorExpression(right);
     } else {
@@ -113,10 +116,11 @@ fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !?Value {
     }
 }
 
-fn evalBangOperatorExpression(right: ?Value) Value {
+fn evalBangOperatorExpression(right: ?Value) !Value {
     return if (right) |r| switch (r) {
         .string, .number => .{ .boolean = false },
         .boolean => .{ .boolean = !right.?.boolean },
+        .@"break" => error.UnknownPrefixOperator,
     } else .{ .boolean = true };
 }
 
@@ -238,10 +242,11 @@ pub const Environment = struct {
     }
 };
 
-const Value = union(enum) {
+pub const Value = union(enum) {
     string: []const u8,
     number: f64,
     boolean: bool,
+    @"break": void,
 
     pub fn format(self: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -251,6 +256,9 @@ const Value = union(enum) {
             .string => try writer.writeAll(self.string),
             .number => try writer.print("{d}", .{self.number}),
             .boolean => try writer.print("{}", .{self.boolean}),
+            else => {
+                // TODO:
+            },
         }
     }
 };
