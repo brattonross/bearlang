@@ -628,7 +628,7 @@ test "if/else" {
     try std.testing.expectEqual(1, consequence.statements.items.len);
     try std.testing.expectEqualStrings("x", consequence.statements.items[0].expression.identifier);
 
-    const alternative = @"if".alternative.?;
+    const alternative = @"if".alternative.?.block;
     try std.testing.expectEqual(1, alternative.statements.items.len);
     try std.testing.expectEqualStrings("y", alternative.statements.items[0].expression.identifier);
 }

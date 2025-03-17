@@ -29,15 +29,15 @@ pub fn init(allocator: Allocator, parser: *Parser, environment: *Environment) In
     };
 }
 
-pub fn run(self: *Interpreter) !?Value {
-    var value: ?Value = null;
+pub fn run(self: *Interpreter) !Value {
+    var value = Value{ .void = {} };
     while (try self.parser.next()) |statement| {
         value = try self.evalStatement(statement.*);
     }
     return value;
 }
 
-fn evalStatement(self: *Interpreter, statement: Statement) anyerror!?Value {
+fn evalStatement(self: *Interpreter, statement: Statement) anyerror!Value {
     return switch (statement) {
         .let => try self.evalLetStatement(statement.let),
         .@"for" => try self.evalForStatement(statement.@"for"),
@@ -47,17 +47,18 @@ fn evalStatement(self: *Interpreter, statement: Statement) anyerror!?Value {
     };
 }
 
-fn evalLetStatement(self: *Interpreter, let: LetStatement) !?Value {
-    if (try self.evalExpression(let.value.*)) |value| {
-        try self.environment.set(let.name, value);
-        return null;
-    } else {
+fn evalLetStatement(self: *Interpreter, let: LetStatement) !Value {
+    const value = try self.evalExpression(let.value.*);
+    if (value == .void) {
         return error.InvalidLetStatement;
     }
+
+    try self.environment.set(let.name, value);
+    return .{ .void = {} };
 }
 
-fn evalForStatement(self: *Interpreter, statement: ForStatement) !?Value {
-    var value: ?Value = null;
+fn evalForStatement(self: *Interpreter, statement: ForStatement) !Value {
+    var value = Value{ .void = {} };
 
     if (statement.initial) |initial| {
         // TODO: ignored? probably should check that this is null/void
@@ -68,7 +69,7 @@ fn evalForStatement(self: *Interpreter, statement: ForStatement) !?Value {
         const should_iter = if (statement.condition) |condition| isTruthy(try self.evalExpression(condition.*)) else true;
         if (should_iter) {
             value = try self.evalBlockStatement(statement.block);
-            if (value) |v| if (v == .@"break") break;
+            if (value == .@"break") break;
         } else {
             break;
         }
@@ -84,11 +85,11 @@ fn evalBreakStatement() Value {
     return .{ .@"break" = {} };
 }
 
-fn evalBlockStatement(self: *Interpreter, block: BlockStatement) !?Value {
-    var value: ?Value = null;
+fn evalBlockStatement(self: *Interpreter, block: BlockStatement) !Value {
+    var value = Value{ .void = {} };
     for (block.statements.items) |statement| {
         value = try self.evalStatement(statement.*);
-        if (value) |v| if (v == .@"break") break;
+        if (value == .@"break") break;
     }
     return value;
 }
@@ -100,9 +101,9 @@ fn isTruthy(exp: ?Value) bool {
     } else false;
 }
 
-fn evalExpression(self: *Interpreter, expression: Expression) anyerror!?Value {
+fn evalExpression(self: *Interpreter, expression: Expression) anyerror!Value {
     return switch (expression) {
-        .identifier => self.evalIdentifier(expression.identifier),
+        .identifier => try self.evalIdentifier(expression.identifier),
         .string => .{ .string = expression.string },
         .number => .{ .number = expression.number },
         .boolean => .{ .boolean = expression.boolean },
@@ -113,11 +114,11 @@ fn evalExpression(self: *Interpreter, expression: Expression) anyerror!?Value {
     };
 }
 
-fn evalIdentifier(self: *Interpreter, identifier: []const u8) ?Value {
-    return self.environment.get(identifier);
+fn evalIdentifier(self: *Interpreter, identifier: []const u8) !Value {
+    return self.environment.get(identifier) orelse error.UnknownIdentifier;
 }
 
-fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !?Value {
+fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !Value {
     const right = try self.evalExpression(prefix.right.*);
     if (std.mem.eql(u8, "!", prefix.operator)) {
         return try evalBangOperatorExpression(right);
@@ -128,12 +129,12 @@ fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !?Value {
     }
 }
 
-fn evalBangOperatorExpression(right: ?Value) !Value {
-    return if (right) |r| switch (r) {
-        .string, .number => .{ .boolean = false },
-        .boolean => .{ .boolean = !right.?.boolean },
+fn evalBangOperatorExpression(right: Value) !Value {
+    return switch (right) {
+        .boolean => .{ .boolean = !right.boolean },
         .@"break" => error.UnknownPrefixOperator,
-    } else .{ .boolean = true };
+        else => .{ .boolean = false },
+    };
 }
 
 fn evalMinusPrefixOperatorExpression(right: ?Value) !Value {
@@ -143,16 +144,9 @@ fn evalMinusPrefixOperatorExpression(right: ?Value) !Value {
     return .{ .number = -right.?.number };
 }
 
-fn evalInfixExpression(self: *Interpreter, infix: InfixExpression) !?Value {
-    const maybe_left = try self.evalExpression(infix.left.*);
-    const maybe_right = try self.evalExpression(infix.right.*);
-
-    if (maybe_left == null or maybe_right == null) {
-        return error.InfixTypeMismatch;
-    }
-
-    const left = maybe_left.?;
-    const right = maybe_right.?;
+fn evalInfixExpression(self: *Interpreter, infix: InfixExpression) !Value {
+    const left = try self.evalExpression(infix.left.*);
+    const right = try self.evalExpression(infix.right.*);
 
     if (left == .string and right == .string) {
         return try self.evalStringInfixExpression(infix.operator, left.string, right.string);
@@ -224,34 +218,32 @@ fn evalBooleanInfixExpression(operator: []const u8, left: bool, right: bool) !Va
     }
 }
 
-fn evalCallExpression(self: *Interpreter, call: CallExpression) !?Value {
+fn evalCallExpression(self: *Interpreter, call: CallExpression) !Value {
     var stdout = std.io.getStdOut().writer();
 
     const fn_name = call.function.identifier;
     if (std.mem.eql(u8, "print", fn_name)) {
         for (call.arguments.items) |arg| {
             const value = try self.evalExpression(arg.*);
-            if (value) |v| {
-                try stdout.print("{}", .{v});
-            } else {
-                try stdout.writeAll("nil");
+            if (value != .@"break" and value != .void) {
+                try stdout.print("{}", .{value});
             }
         }
         try stdout.writeAll("\n");
-        return null;
+        return .{ .void = {} };
     } else {
         std.debug.panic("calling non-builtin functions is not implemented", .{});
     }
 }
 
-fn evalIfExpression(self: *Interpreter, ife: IfExpression) !?Value {
+fn evalIfExpression(self: *Interpreter, ife: IfExpression) !Value {
     if (isTruthy(try self.evalExpression(ife.condition.*))) {
         return try self.evalBlockStatement(ife.consequence);
     } else if (ife.alternative) |alt| switch (alt) {
         .block => return try self.evalBlockStatement(alt.block),
         .expression => return try self.evalIfExpression(alt.expression.@"if"),
     } else {
-        return null;
+        return .{ .void = {} };
     }
 }
 
@@ -276,6 +268,7 @@ pub const Value = union(enum) {
     number: f64,
     boolean: bool,
     @"break": void,
+    void: void,
 
     pub fn format(self: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
