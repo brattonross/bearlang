@@ -10,14 +10,22 @@ const CallExpression = Parser.CallExpression;
 
 // statements
 const Statement = Parser.Statement;
+const LetStatement = Parser.LetStatement;
+const WhileStatement = Parser.WhileStatement;
+const BlockStatement = Parser.BlockStatement;
 
 const Interpreter = @This();
 
 allocator: Allocator,
 parser: *Parser,
+environment: *Environment,
 
-pub fn init(allocator: Allocator, parser: *Parser) Interpreter {
-    return .{ .allocator = allocator, .parser = parser };
+pub fn init(allocator: Allocator, parser: *Parser, environment: *Environment) Interpreter {
+    return .{
+        .allocator = allocator,
+        .parser = parser,
+        .environment = environment,
+    };
 }
 
 pub fn run(self: *Interpreter) !?Value {
@@ -28,23 +36,70 @@ pub fn run(self: *Interpreter) !?Value {
     return value;
 }
 
-fn evalStatement(self: *Interpreter, statement: Statement) !?Value {
+fn evalStatement(self: *Interpreter, statement: Statement) anyerror!?Value {
     return switch (statement) {
+        .let => try self.evalLetStatement(statement.let),
+        .@"while" => try self.evalWhileStatement(statement.@"while"),
+        .block => try self.evalBlockStatement(statement.block),
         .expression => try self.evalExpression(statement.expression.*),
-        else => std.debug.panic("unhandled {}", .{statement}),
     };
+}
+
+fn evalLetStatement(self: *Interpreter, let: LetStatement) !?Value {
+    if (try self.evalExpression(let.value.*)) |value| {
+        try self.environment.set(let.name, value);
+        return null;
+    } else {
+        return error.InvalidLetStatement;
+    }
+}
+
+fn evalWhileStatement(self: *Interpreter, statement: WhileStatement) !?Value {
+    while (true) {
+        const condition = try self.evalExpression(statement.condition.*);
+        if (isTruthy(condition)) {
+            // TODO: consider `break` and `return`
+            _ = try self.evalBlockStatement(statement.block);
+        } else {
+            break;
+        }
+    }
+
+    // TODO: could be treated as an expression
+    return null;
+}
+
+fn evalBlockStatement(self: *Interpreter, block: BlockStatement) !?Value {
+    for (block.statements.items) |statement| {
+        // TODO: consider `break` and `return`
+        _ = try self.evalStatement(statement.*);
+    }
+
+    // TODO: could be treated as an expression
+    return null;
+}
+
+fn isTruthy(exp: ?Value) bool {
+    return if (exp) |e| switch (e) {
+        .boolean => e.boolean == true,
+        else => true,
+    } else false;
 }
 
 fn evalExpression(self: *Interpreter, expression: Expression) anyerror!?Value {
     return switch (expression) {
+        .identifier => self.evalIdentifier(expression.identifier),
         .string => .{ .string = expression.string },
         .number => .{ .number = expression.number },
         .boolean => .{ .boolean = expression.boolean },
         .prefix => try self.evalPrefixExpression(expression.prefix),
         .infix => try self.evalInfixExpression(expression.infix),
         .call => try self.evalCallExpression(expression.call),
-        else => std.debug.panic("unimplemented: {}", .{expression}),
     };
+}
+
+fn evalIdentifier(self: *Interpreter, identifier: []const u8) ?Value {
+    return self.environment.get(identifier);
 }
 
 fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression) !?Value {
@@ -86,12 +141,23 @@ fn evalInfixExpression(self: *Interpreter, infix: InfixExpression) !?Value {
     if (left == .string and right == .string) {
         return try self.evalStringInfixExpression(infix.operator, left.string, right.string);
     } else if (left == .number and right == .number) {
-        return try evalNumberInfixExpression(infix.operator, left.number, right.number);
+        const value = try evalNumberInfixExpression(infix.operator, left.number, right.number);
+        if (isAssignmentInfixExpression(infix)) {
+            try self.environment.set(infix.left.identifier, value);
+        }
+        return value;
     } else if (left == .boolean and right == .boolean) {
         return try evalBooleanInfixExpression(infix.operator, left.boolean, right.boolean);
     } else {
         return error.InfixTypeMismatch;
     }
+}
+
+fn isAssignmentInfixExpression(infix: InfixExpression) bool {
+    if (infix.left.* != .identifier) {
+        return false;
+    }
+    return std.mem.eql(u8, "+=", infix.operator) or std.mem.eql(u8, "-=", infix.operator) or std.mem.eql(u8, "*=", infix.operator) or std.mem.eql(u8, "/=", infix.operator);
 }
 
 fn evalStringInfixExpression(self: *Interpreter, operator: []const u8, left: []const u8, right: []const u8) !Value {
@@ -104,11 +170,24 @@ fn evalStringInfixExpression(self: *Interpreter, operator: []const u8, left: []c
 }
 
 fn evalNumberInfixExpression(operator: []const u8, left: f64, right: f64) !Value {
-    if (std.mem.eql(u8, "+", operator)) {
+    if (std.mem.eql(u8, "+", operator) or std.mem.eql(u8, "+=", operator)) {
         return .{ .number = left + right };
-    } else if (std.mem.eql(u8, "/", operator)) {
+    } else if (std.mem.eql(u8, "-", operator) or std.mem.eql(u8, "-=", operator)) {
+        return .{ .number = left - right };
+    } else if (std.mem.eql(u8, "*", operator) or std.mem.eql(u8, "*=", operator)) {
+        return .{ .number = left * right };
+    } else if (std.mem.eql(u8, "/", operator) or std.mem.eql(u8, "/=", operator)) {
         return .{ .number = left / right };
+    } else if (std.mem.eql(u8, "<", operator)) {
+        return .{ .boolean = left < right };
+    } else if (std.mem.eql(u8, "<=", operator)) {
+        return .{ .boolean = left <= right };
+    } else if (std.mem.eql(u8, ">", operator)) {
+        return .{ .boolean = left > right };
+    } else if (std.mem.eql(u8, ">=", operator)) {
+        return .{ .boolean = left >= right };
     } else {
+        std.log.err("unhandled number infix operator `{s}`", .{operator});
         return error.InfixUnknownOperator;
     }
 }
@@ -140,6 +219,22 @@ fn evalCallExpression(self: *Interpreter, call: CallExpression) !?Value {
         std.debug.panic("calling non-builtin functions is not implemented", .{});
     }
 }
+
+pub const Environment = struct {
+    items: std.StringHashMap(Value),
+
+    pub fn init(allocator: Allocator) Environment {
+        return .{ .items = std.StringHashMap(Value).init(allocator) };
+    }
+
+    pub fn get(self: Environment, key: []const u8) ?Value {
+        return self.items.get(key);
+    }
+
+    pub fn set(self: *Environment, key: []const u8, value: Value) !void {
+        try self.items.put(key, value);
+    }
+};
 
 const Value = union(enum) {
     string: []const u8,

@@ -12,22 +12,33 @@ pub const Token = struct {
         number,
         string,
 
-        assign,
-        plus,
-        minus,
-        asterisk,
-        slash,
-        bang,
+        assign, // =
+        plus, // +
+        minus, // -
+        equals, // ==
+        not_equals, // !=
+        plus_equals, // +=
+        minus_equals, // -=
+        less_than, // <
+        greater_than, // >
+        less_than_equals, // <=
+        greater_than_equals, // >=
+        asterisk, // *
+        asterisk_equals, // *=
+        slash, // /
+        slash_equals, // /=
+        bang, // !
         @"and",
         @"or",
 
-        left_paren,
-        right_paren,
-        left_brace,
-        right_brace,
-        comma,
+        left_paren, // (
+        right_paren, // )
+        left_brace, // {
+        right_brace, // }
+        comma, // ,
 
         let,
+        @"while",
         true,
         false,
     };
@@ -54,18 +65,77 @@ pub fn nextToken(self: *Lexer) !Token {
 
     var token = Token{ .kind = .eof, .lexeme = "", .line = self.line };
 
+    const start_pos = self.pos;
     if (self.currentLexeme()) |current| switch (current) {
-        '=' => token.kind = .assign,
-        '+' => token.kind = .plus,
-        '-' => token.kind = .minus,
+        '=' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .equals;
+                self.advance();
+            } else {
+                token.kind = .assign;
+            }
+        },
+        '+' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .plus_equals;
+                self.advance();
+            } else {
+                token.kind = .plus;
+            }
+        },
+        '-' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .minus_equals;
+                self.advance();
+            } else {
+                token.kind = .minus;
+            }
+        },
+        '!' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .not_equals;
+                self.advance();
+            } else {
+                token.kind = .bang;
+            }
+        },
+        '<' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .less_than_equals;
+                self.advance();
+            } else {
+                token.kind = .less_than;
+            }
+        },
+        '>' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .greater_than_equals;
+                self.advance();
+            } else {
+                token.kind = .greater_than;
+            }
+        },
+        '*' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .asterisk_equals;
+                self.advance();
+            } else {
+                token.kind = .asterisk;
+            }
+        },
+        '/' => {
+            if (self.peekLexeme() == '=') {
+                token.kind = .slash_equals;
+                self.advance();
+            } else {
+                token.kind = .slash;
+            }
+        },
         '(' => token.kind = .left_paren,
         ')' => token.kind = .right_paren,
         '{' => token.kind = .left_brace,
         '}' => token.kind = .right_brace,
         ',' => token.kind = .comma,
-        '*' => token.kind = .asterisk,
-        '/' => token.kind = .slash,
-        '!' => token.kind = .bang,
         '"' => return self.scanString(),
         else => {
             if (isAlpha(current)) {
@@ -78,9 +148,10 @@ pub fn nextToken(self: *Lexer) !Token {
         },
     };
 
-    if (token.kind != .eof) {
-        token.lexeme = self.src[self.pos .. self.pos + 1];
+    if (token.kind != .eof and token.lexeme.len == 0) {
+        token.lexeme = self.src[start_pos .. self.pos + 1];
     }
+
     self.advance();
     return token;
 }
@@ -105,6 +176,8 @@ fn scanIdentifier(self: *Lexer) Token {
         kind = .@"and";
     } else if (std.mem.eql(u8, "or", lexeme)) {
         kind = .@"or";
+    } else if (std.mem.eql(u8, "while", lexeme)) {
+        kind = .@"while";
     }
 
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };
@@ -309,4 +382,59 @@ test "or" {
         try std.testing.expectEqual(test_case.kind, token.kind);
         try std.testing.expectEqualStrings(test_case.lexeme, token.lexeme);
     }
+}
+
+test "equals" {
+    var lexer = Lexer.init("true == false");
+
+    const test_cases = [_]struct {
+        kind: Token.Kind,
+        lexeme: []const u8,
+    }{
+        .{ .kind = .true, .lexeme = "true" },
+        .{ .kind = .equals, .lexeme = "==" },
+        .{ .kind = .false, .lexeme = "false" },
+    };
+    for (test_cases) |test_case| {
+        const token = try lexer.nextToken();
+        try std.testing.expectEqual(test_case.kind, token.kind);
+        try std.testing.expectEqual(1, token.line);
+        try std.testing.expectEqualStrings(test_case.lexeme, token.lexeme);
+    }
+}
+
+test "not equals" {
+    var lexer = Lexer.init("!=");
+
+    const token = try lexer.nextToken();
+    try std.testing.expectEqual(.not_equals, token.kind);
+    try std.testing.expectEqual(1, token.line);
+    try std.testing.expectEqualStrings("!=", token.lexeme);
+}
+
+test "plus equals" {
+    var lexer = Lexer.init("+=");
+
+    const token = try lexer.nextToken();
+    try std.testing.expectEqual(.plus_equals, token.kind);
+    try std.testing.expectEqual(1, token.line);
+    try std.testing.expectEqualStrings("+=", token.lexeme);
+}
+
+test "minus equals" {
+    var lexer = Lexer.init("-=");
+
+    const token = try lexer.nextToken();
+    try std.testing.expectEqual(.minus_equals, token.kind);
+    try std.testing.expectEqual(1, token.line);
+    try std.testing.expectEqualStrings("-=", token.lexeme);
+}
+
+test "while" {
+    var lexer = Lexer.init("while");
+
+    const token = try lexer.nextToken();
+    try std.testing.expectEqual(.@"while", token.kind);
+    try std.testing.expectEqual(1, token.line);
+    try std.testing.expectEqualStrings("while", token.lexeme);
 }

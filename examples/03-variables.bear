@@ -1,0 +1,7 @@
+let a = "initial"
+print("a is ", a)
+
+let b = 1
+let c = 2
+let d = b + c
+print("d is ", d)

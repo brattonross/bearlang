@@ -30,6 +30,7 @@ fn advance(self: *Parser) !void {
 fn parseStatement(self: *Parser) !*Statement {
     return switch (self.current_token.kind) {
         .let => self.parseLetStatement(),
+        .@"while" => self.parseWhileStatement(),
         else => self.parseExpressionStatement(),
     };
 }
@@ -53,6 +54,40 @@ fn parseLetStatement(self: *Parser) !*Statement {
     return statement;
 }
 
+fn parseWhileStatement(self: *Parser) !*Statement {
+    try self.advance(); // advance past `while`
+
+    try self.expectAdvance(.left_paren);
+    const condition = try self.parseExpression(.lowest);
+    try self.expectAdvance(.right_paren);
+
+    const block = try self.parseBlockStatement();
+
+    const @"while" = WhileStatement{
+        .condition = condition,
+        .block = block,
+    };
+
+    const statement = try self.allocator.create(Statement);
+    statement.* = .{ .@"while" = @"while" };
+    return statement;
+}
+
+fn parseBlockStatement(self: *Parser) !BlockStatement {
+    try self.expectAdvance(.left_brace);
+
+    var statements = std.ArrayList(*Statement).init(self.allocator);
+
+    while (self.current_token.kind != .eof and self.current_token.kind != .right_brace) {
+        const statement = try self.parseStatement();
+        try statements.append(statement);
+    }
+
+    try self.expectAdvance(.right_brace);
+
+    return .{ .statements = statements };
+}
+
 fn parseExpressionStatement(self: *Parser) !*Statement {
     const expression = try self.parseExpression(.lowest);
     const statement = try self.allocator.create(Statement);
@@ -74,7 +109,20 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
     while (@intFromEnum(precedence) < @intFromEnum(tokenPrecedence(self.current_token.kind))) {
         // infix parse fns
         left = switch (self.current_token.kind) {
-            .@"and", .@"or", .plus, .slash => try self.parseInfixExpression(left),
+            .equals,
+            .not_equals,
+            .less_than,
+            .less_than_equals,
+            .greater_than,
+            .greater_than_equals,
+            .@"and",
+            .@"or",
+            .plus,
+            .plus_equals,
+            .minus,
+            .minus_equals,
+            .slash,
+            => try self.parseInfixExpression(left),
             .left_paren => try self.parseCallExpression(left),
             else => break,
         };
@@ -170,14 +218,31 @@ fn parseInfixExpression(self: *Parser, left: *Expression) !*Expression {
         .right = right,
     };
 
+    // assignment should only be done with identifiers on the left
+    if ((std.mem.eql(u8, "+=", operator) or std.mem.eql(u8, "-=", operator) or std.mem.eql(u8, "*=", operator) or std.mem.eql(u8, "/=", operator)) and left.* != .identifier) {
+        return error.InvalidAssignmentOperation;
+    }
+
     const expression = try self.allocator.create(Expression);
     expression.* = .{ .infix = infix };
     return expression;
 }
 
+/// If the current token kind matches, advance the parser, else return an error.
+fn expectAdvance(self: *Parser, expected: Token.Kind) !void {
+    if (self.current_token.kind == expected) {
+        try self.advance();
+    } else {
+        std.log.err("expected next token to be {}, got {}\n", .{ expected, self.current_token.kind });
+        return error.UnexpectedToken;
+    }
+}
+
 pub const Statement = union(enum) {
     let: LetStatement,
     expression: *Expression,
+    @"while": WhileStatement,
+    block: BlockStatement,
 };
 
 pub const Identifier = []const u8;
@@ -185,6 +250,15 @@ pub const Identifier = []const u8;
 pub const LetStatement = struct {
     name: Identifier,
     value: *Expression,
+};
+
+pub const WhileStatement = struct {
+    condition: *Expression,
+    block: BlockStatement,
+};
+
+pub const BlockStatement = struct {
+    statements: std.ArrayList(*Statement),
 };
 
 pub const Expression = union(enum) {
@@ -229,8 +303,10 @@ fn tokenPrecedence(kind: Token.Kind) Precedence {
     return switch (kind) {
         .@"or" => .@"or",
         .@"and" => .@"and",
-        .plus => .sum,
-        .slash, .asterisk => .product,
+        .equals, .not_equals => .equals,
+        .less_than, .less_than_equals, .greater_than, .greater_than_equals => .less_greater,
+        .plus, .plus_equals, .minus, .minus_equals => .sum,
+        .slash, .slash_equals, .asterisk, .asterisk_equals => .product,
         .left_paren => .call,
         else => .lowest,
     };
@@ -335,4 +411,78 @@ test "bang prefix" {
     const prefix = statement.?.expression.prefix;
     try std.testing.expectEqualStrings("!", prefix.operator);
     try std.testing.expectEqual(false, prefix.right.boolean);
+}
+
+test "equals" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("true == true");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const infix = statement.?.expression.infix;
+    try std.testing.expectEqual(true, infix.left.boolean);
+    try std.testing.expectEqualStrings("==", infix.operator);
+    try std.testing.expectEqual(true, infix.right.boolean);
+}
+
+test "not equals" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("true != true");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const infix = statement.?.expression.infix;
+    try std.testing.expectEqual(true, infix.left.boolean);
+    try std.testing.expectEqualStrings("!=", infix.operator);
+    try std.testing.expectEqual(true, infix.right.boolean);
+}
+
+test "greater than" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("1 > 3");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const infix = statement.?.expression.infix;
+    try std.testing.expectEqual(1.0, infix.left.number);
+    try std.testing.expectEqualStrings(">", infix.operator);
+    try std.testing.expectEqual(3.0, infix.right.number);
+}
+
+test "while" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("while (x > 10) { x -= 1 }");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const @"while" = statement.?.@"while";
+
+    const condition = @"while".condition.infix;
+    try std.testing.expectEqualStrings("x", condition.left.identifier);
+    try std.testing.expectEqualStrings(">", condition.operator);
+    try std.testing.expectEqual(10.0, condition.right.number);
+
+    const block = @"while".block;
+    try std.testing.expectEqual(1, block.statements.items.len);
+
+    const block_infix = block.statements.items[0].expression.infix;
+    try std.testing.expectEqualStrings("x", block_infix.left.identifier);
+    try std.testing.expectEqualStrings("-=", block_infix.operator);
+    try std.testing.expectEqual(1.0, block_infix.right.number);
 }

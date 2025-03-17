@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const Lexer = @import("./Lexer.zig");
 const Parser = @import("./Parser.zig");
 const Interpreter = @import("./Interpreter.zig");
+const Environment = Interpreter.Environment;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -43,7 +44,8 @@ fn runFile(allocator: Allocator, file_path: [:0]const u8) !void {
 fn runSrc(allocator: Allocator, src: []const u8) !void {
     var lexer = Lexer.init(src);
     var parser = try Parser.init(allocator, &lexer);
-    var interpreter = Interpreter.init(allocator, &parser);
+    var env = Environment.init(allocator);
+    var interpreter = Interpreter.init(allocator, &parser, &env);
     _ = try interpreter.run();
 }
 
