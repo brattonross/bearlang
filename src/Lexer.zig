@@ -158,7 +158,7 @@ pub fn nextToken(self: *Lexer) !Token {
             if (isAlpha(current)) {
                 return self.scanIdentifier();
             } else if (isDigit(current)) {
-                return self.scanNumber();
+                return try self.scanNumber();
             } else {
                 return error.UnexpectedCharacter;
             }
@@ -177,7 +177,7 @@ fn scanIdentifier(self: *Lexer) Token {
     const start_pos = self.pos;
 
     while (self.currentLexeme()) |current| {
-        if (!isAlpha(current)) break;
+        if (!isValidIdentifierChar(current)) break;
         self.advance();
     }
 
@@ -210,7 +210,7 @@ fn scanIdentifier(self: *Lexer) Token {
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };
 }
 
-fn scanNumber(self: *Lexer) Token {
+fn scanNumber(self: *Lexer) !Token {
     const start_pos = self.pos;
 
     while (self.currentLexeme()) |current| {
@@ -218,16 +218,20 @@ fn scanNumber(self: *Lexer) Token {
         self.advance();
     }
 
-    if (self.currentLexeme()) |maybe_period| if (maybe_period == '.') {
-        if (self.peekLexeme()) |peek| if (isDigit(peek)) {
-            self.advance();
-
-            while (self.currentLexeme()) |current| {
-                if (!isDigit(current)) break;
+    if (self.currentLexeme()) |current_lexeme| {
+        if (current_lexeme == '.') {
+            if (self.peekLexeme()) |peek| if (isDigit(peek)) {
                 self.advance();
-            }
-        };
-    };
+
+                while (self.currentLexeme()) |current| {
+                    if (!isDigit(current)) break;
+                    self.advance();
+                }
+            };
+        } else if (isAlpha(current_lexeme)) {
+            return error.UnexpectedToken;
+        }
+    }
 
     return .{ .kind = .number, .lexeme = self.src[start_pos..self.pos], .line = self.line };
 }
@@ -278,6 +282,10 @@ fn isDigit(c: u8) bool {
     return '0' <= c and c <= '9';
 }
 
+fn isValidIdentifierChar(c: u8) bool {
+    return isAlpha(c) or isDigit(c);
+}
+
 fn isWhitespace(c: u8) bool {
     return c == ' ' or c == '\t' or c == '\r' or c == '\n';
 }
@@ -289,6 +297,31 @@ test "identifier" {
     try std.testing.expectEqual(.identifier, token.kind);
     try std.testing.expectEqual(1, token.line);
     try std.testing.expectEqualStrings("foobar", token.lexeme);
+}
+
+test "identifier with underscore" {
+    var lexer = Lexer.init("foo_bar");
+
+    const token = try lexer.nextToken();
+    try std.testing.expectEqual(.identifier, token.kind);
+    try std.testing.expectEqual(1, token.line);
+    try std.testing.expectEqualStrings("foo_bar", token.lexeme);
+}
+
+test "identifier with digits" {
+    var lexer = Lexer.init("foo_2");
+
+    const token = try lexer.nextToken();
+    try std.testing.expectEqual(.identifier, token.kind);
+    try std.testing.expectEqual(1, token.line);
+    try std.testing.expectEqualStrings("foo_2", token.lexeme);
+}
+
+test "identifier cannot start with digits" {
+    var lexer = Lexer.init("21abc");
+
+    const result = lexer.nextToken();
+    try std.testing.expectError(error.UnexpectedToken, result);
 }
 
 test "integer" {

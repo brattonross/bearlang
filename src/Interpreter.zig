@@ -9,6 +9,7 @@ const PrefixExpression = Parser.PrefixExpression;
 const InfixExpression = Parser.InfixExpression;
 const CallExpression = Parser.CallExpression;
 const IfExpression = Parser.IfExpression;
+const FunctionExpression = Parser.FunctionExpression;
 
 // statements
 const Statement = Parser.Statement;
@@ -55,6 +56,7 @@ fn evalStatement(self: *Interpreter, statement: Statement, env: *Environment) an
 fn evalLetStatement(self: *Interpreter, let: LetStatement, env: *Environment) !Value {
     const value = try self.evalExpression(let.value.*, env);
     if (value == .void) {
+        std.debug.print("invalid let statement: expected value {} to return non-void value.\n", .{let.value.*});
         return error.InvalidLetStatement;
     }
 
@@ -136,6 +138,7 @@ fn evalExpression(self: *Interpreter, expression: Expression, env: *Environment)
         .infix => try self.evalInfixExpression(expression.infix, env),
         .call => try self.evalCallExpression(expression.call, env),
         .@"if" => try self.evalIfExpression(expression.@"if", env),
+        .function => self.evalFunctionExpression(expression.function, env),
     };
 }
 
@@ -242,6 +245,18 @@ fn evalBooleanInfixExpression(operator: []const u8, left: bool, right: bool) !Va
     }
 }
 
+fn evalFunctionExpression(_: *Interpreter, function: FunctionExpression, env: *Environment) Value {
+    const value = Value{
+        .function = .{
+            .name = null,
+            .parameters = function.parameters,
+            .body = function.body,
+            .env = env,
+        },
+    };
+    return value;
+}
+
 fn evalCallExpression(self: *Interpreter, call: CallExpression, env: *Environment) !Value {
     var stdout = std.io.getStdOut().writer();
 
@@ -333,7 +348,11 @@ pub const Value = union(enum) {
             .number => try writer.print("{d}", .{self.number}),
             .boolean => try writer.print("{}", .{self.boolean}),
             .function => {
-                try writer.print("fn {}(", .{self.function.name});
+                try writer.writeAll("fn");
+                if (self.function.name) |name| {
+                    try writer.print(" {}", .{name});
+                }
+                try writer.writeAll("(");
                 for (self.function.parameters.items, 0..) |param, i| {
                     try writer.print("{}", .{param.identifier});
                     if (i < self.function.parameters.items.len - 1) {
@@ -349,7 +368,7 @@ pub const Value = union(enum) {
 };
 
 const FunctionValue = struct {
-    name: Identifier,
+    name: ?Identifier,
     parameters: std.ArrayList(*Expression),
     body: BlockStatement,
     env: *Environment,

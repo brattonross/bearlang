@@ -4,3 +4,10 @@ fn plus(a, b) {
 
 let result = plus(1, 2)
 print("1 + 2 = ", result)
+
+let plus_plus = fn(a, b, c) {
+    return a + b + c
+}
+
+let result_2 = plus_plus(1, 2, 3)
+print("1 + 2 + 3 = ", result_2)

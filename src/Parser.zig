@@ -50,15 +50,12 @@ fn parseStatement(self: *Parser) !*Statement {
 
 fn parseLetStatement(self: *Parser) !*Statement {
     const let_token = self.current_token;
-    try self.advance();
+    try self.advanceExpect(.let);
 
     const ident_token = self.current_token;
-    try self.advance();
+    try self.advanceExpect(.identifier);
 
-    if (self.current_token.kind != .assign) {
-        return error.InvalidLetStatement;
-    }
-    try self.advance();
+    try self.advanceExpect(.assign);
 
     const value = try self.parseExpression(.lowest);
 
@@ -187,6 +184,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
         .true, .false => try self.parseBoolean(),
         .bang, .minus => try self.parsePrefixExpression(),
         .@"if" => try self.parseIfExpression(),
+        .function => try self.parseFunctionExpression(),
         else => return error.InvalidExpression,
     };
 
@@ -265,6 +263,24 @@ fn parsePrefixExpression(self: *Parser) !*Expression {
     };
     const expression = try self.allocator.create(Expression);
     expression.* = .{ .prefix = prefix };
+    return expression;
+}
+
+fn parseFunctionExpression(self: *Parser) !*Expression {
+    const token = self.current_token;
+    try self.advanceExpect(.function);
+
+    const parameters = try self.parseExpressionList(.right_paren);
+    const body = try self.parseBlockStatement();
+
+    const function = FunctionExpression{
+        .token = token,
+        .parameters = parameters,
+        .body = body,
+    };
+
+    const expression = try self.allocator.create(Expression);
+    expression.* = .{ .function = function };
     return expression;
 }
 
@@ -367,6 +383,13 @@ pub const Statement = union(enum) {
 pub const Identifier = struct {
     token: Token,
     lexeme: []const u8,
+
+    pub fn format(self: Identifier, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        try writer.print("{s}", .{self.lexeme});
+    }
 };
 
 pub const LetStatement = struct {
@@ -409,6 +432,7 @@ pub const Expression = union(enum) {
     infix: InfixExpression,
     call: CallExpression,
     @"if": IfExpression,
+    function: FunctionExpression,
 };
 
 pub const PrefixExpression = struct {
@@ -440,6 +464,12 @@ pub const IfExpression = struct {
         block: BlockStatement, // else block
         expression: *Expression, // else if expression
     };
+};
+
+pub const FunctionExpression = struct {
+    token: Token,
+    parameters: std.ArrayList(*Expression),
+    body: BlockStatement,
 };
 
 const Precedence = enum {
@@ -733,6 +763,35 @@ test "function statement" {
 
     try std.testing.expectEqual(.function, func.token.kind);
     try std.testing.expectEqualStrings("plus", func.name.lexeme);
+
+    try std.testing.expectEqual(2, func.parameters.items.len);
+    try std.testing.expectEqualStrings("a", func.parameters.items[0].identifier.lexeme);
+    try std.testing.expectEqualStrings("b", func.parameters.items[1].identifier.lexeme);
+
+    try std.testing.expectEqual(1, func.body.statements.items.len);
+    const return_stmt = func.body.statements.items[0].@"return";
+    try std.testing.expectEqual(.@"return", return_stmt.token.kind);
+    try std.testing.expectEqualStrings("a", return_stmt.return_value.infix.left.identifier.lexeme);
+    try std.testing.expectEqualStrings("+", return_stmt.return_value.infix.operator);
+    try std.testing.expectEqualStrings("b", return_stmt.return_value.infix.right.identifier.lexeme);
+}
+
+test "function expression" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("let plus = fn(a, b) { return a + b }");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+
+    const let = statement.?.let;
+    try std.testing.expectEqualStrings("plus", let.name.lexeme);
+
+    const func = let.value.function;
+    try std.testing.expectEqual(.function, func.token.kind);
 
     try std.testing.expectEqual(2, func.parameters.items.len);
     try std.testing.expectEqualStrings("a", func.parameters.items[0].identifier.lexeme);
