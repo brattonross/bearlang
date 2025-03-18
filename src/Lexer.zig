@@ -41,6 +41,8 @@ pub const Token = struct {
         semicolon, // ;
 
         let,
+        function,
+        @"return",
         @"for",
         @"break",
         true,
@@ -199,6 +201,10 @@ fn scanIdentifier(self: *Lexer) Token {
         kind = .@"if";
     } else if (std.mem.eql(u8, "else", lexeme)) {
         kind = .@"else";
+    } else if (std.mem.eql(u8, "fn", lexeme)) {
+        kind = .function;
+    } else if (std.mem.eql(u8, "return", lexeme)) {
+        kind = .@"return";
     }
 
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };

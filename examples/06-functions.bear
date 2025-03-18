@@ -1,0 +1,6 @@
+fn plus(a, b) {
+    return a + b
+}
+
+let result = plus(1, 2)
+print("1 + 2 = ", result)

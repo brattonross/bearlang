@@ -42,6 +42,8 @@ fn parseStatement(self: *Parser) !*Statement {
         .let => self.parseLetStatement(),
         .@"for" => self.parseForStatement(),
         .@"break" => self.parseBreakStatement(),
+        .function => self.parseFunctionStatement(),
+        .@"return" => self.parseReturnStatement(),
         else => self.parseExpressionStatement(),
     };
 }
@@ -114,6 +116,42 @@ fn parseBreakStatement(self: *Parser) !*Statement {
     const statement = try self.allocator.create(Statement);
     statement.* = .{ .@"break" = {} };
     try self.advance();
+    return statement;
+}
+
+fn parseFunctionStatement(self: *Parser) !*Statement {
+    const token = self.current_token;
+    try self.advanceExpect(.function);
+
+    const name = try self.parseIdentifier();
+    const parameters = try self.parseExpressionList(.right_paren);
+    const body = try self.parseBlockStatement();
+
+    const function = FunctionStatement{
+        .token = token,
+        .name = name.identifier,
+        .parameters = parameters,
+        .body = body,
+    };
+
+    const statement = try self.allocator.create(Statement);
+    statement.* = .{ .function = function };
+    return statement;
+}
+
+fn parseReturnStatement(self: *Parser) !*Statement {
+    const token = self.current_token;
+    try self.advanceExpect(.@"return");
+
+    const return_value = try self.parseExpression(.lowest);
+
+    const @"return" = ReturnStatement{
+        .token = token,
+        .return_value = return_value,
+    };
+
+    const statement = try self.allocator.create(Statement);
+    statement.* = .{ .@"return" = @"return" };
     return statement;
 }
 
@@ -322,6 +360,8 @@ pub const Statement = union(enum) {
     @"for": ForStatement,
     @"break": void,
     block: BlockStatement,
+    function: FunctionStatement,
+    @"return": ReturnStatement,
 };
 
 pub const Identifier = struct {
@@ -341,6 +381,18 @@ pub const ForStatement = struct {
     condition: ?*Expression,
     after: ?*Expression,
     block: BlockStatement,
+};
+
+pub const FunctionStatement = struct {
+    token: Token,
+    name: Identifier,
+    parameters: std.ArrayList(*Expression),
+    body: BlockStatement,
+};
+
+pub const ReturnStatement = struct {
+    token: Token,
+    return_value: *Expression,
 };
 
 pub const BlockStatement = struct {
@@ -665,4 +717,31 @@ test "if/else" {
     const alternative = @"if".alternative.?.block;
     try std.testing.expectEqual(1, alternative.statements.items.len);
     try std.testing.expectEqualStrings("y", alternative.statements.items[0].expression.identifier.lexeme);
+}
+
+test "function statement" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("fn plus(a, b) { return a + b }");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+    const func = statement.?.function;
+
+    try std.testing.expectEqual(.function, func.token.kind);
+    try std.testing.expectEqualStrings("plus", func.name.lexeme);
+
+    try std.testing.expectEqual(2, func.parameters.items.len);
+    try std.testing.expectEqualStrings("a", func.parameters.items[0].identifier.lexeme);
+    try std.testing.expectEqualStrings("b", func.parameters.items[1].identifier.lexeme);
+
+    try std.testing.expectEqual(1, func.body.statements.items.len);
+    const return_stmt = func.body.statements.items[0].@"return";
+    try std.testing.expectEqual(.@"return", return_stmt.token.kind);
+    try std.testing.expectEqualStrings("a", return_stmt.return_value.infix.left.identifier.lexeme);
+    try std.testing.expectEqualStrings("+", return_stmt.return_value.infix.operator);
+    try std.testing.expectEqualStrings("b", return_stmt.return_value.infix.right.identifier.lexeme);
 }
