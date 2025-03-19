@@ -37,6 +37,9 @@ pub const Token = struct {
         right_paren, // )
         left_brace, // {
         right_brace, // }
+        left_square_bracket, // [
+        right_square_bracket, // ]
+        dot, // .
         comma, // ,
         semicolon, // ;
 
@@ -50,6 +53,12 @@ pub const Token = struct {
         @"if",
         @"else",
     };
+
+    pub fn format(self: Token, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{s}", .{self.lexeme});
+    }
 };
 
 const Lexer = @This();
@@ -151,6 +160,9 @@ pub fn nextToken(self: *Lexer) !Token {
         ')' => token.kind = .right_paren,
         '{' => token.kind = .left_brace,
         '}' => token.kind = .right_brace,
+        '[' => token.kind = .left_square_bracket,
+        ']' => token.kind = .right_square_bracket,
+        '.' => token.kind = .dot,
         ',' => token.kind = .comma,
         ';' => token.kind = .semicolon,
         '"' => return self.scanString(),

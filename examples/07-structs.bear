@@ -1,0 +1,9 @@
+let a = {}
+
+a.foo = "bar"
+a["bar"] = 1
+
+let baz = "qux"
+a[baz] = {}
+
+print("a = ", a)

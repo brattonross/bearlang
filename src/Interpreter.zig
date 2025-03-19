@@ -10,6 +10,8 @@ const InfixExpression = Parser.InfixExpression;
 const CallExpression = Parser.CallExpression;
 const IfExpression = Parser.IfExpression;
 const FunctionExpression = Parser.FunctionExpression;
+const StructExpression = Parser.StructExpression;
+const AccessorExpression = Parser.AccessorExpression;
 
 // statements
 const Statement = Parser.Statement;
@@ -139,6 +141,8 @@ fn evalExpression(self: *Interpreter, expression: Expression, env: *Environment)
         .call => try self.evalCallExpression(expression.call, env),
         .@"if" => try self.evalIfExpression(expression.@"if", env),
         .function => self.evalFunctionExpression(expression.function, env),
+        .@"struct" => try self.evalStructExpression(expression.@"struct", env),
+        .accessor => try self.evalAccessorExpression(expression.accessor, env),
     };
 }
 
@@ -311,6 +315,28 @@ fn evalIfExpression(self: *Interpreter, ife: IfExpression, env: *Environment) !V
     }
 }
 
+fn evalStructExpression(self: *Interpreter, @"struct": StructExpression, env: *Environment) !Value {
+    var map = std.StringHashMap(Value).init(self.allocator);
+
+    var iter = @"struct".map.iterator();
+    while (iter.next()) |entry| {
+        const key = entry.key_ptr.*.identifier.lexeme;
+        const value = try self.evalExpression(entry.value_ptr.*.*, env);
+        try map.put(key, value); // TODO: do we care about clobbering
+    }
+
+    return .{ .@"struct" = .{ .map = map } };
+}
+
+fn evalAccessorExpression(self: *Interpreter, accessor: AccessorExpression, env: *Environment) !Value {
+    const parent_value = try self.evalExpression(accessor.parent.*, env);
+    const key = accessor.key.identifier.lexeme; // TODO: assumes identifier
+    return switch (parent_value) {
+        .@"struct" => |@"struct"| @"struct".map.get(key) orelse error.UnknownStructKey,
+        else => std.debug.panic("attempting to access property of unhandled type {s}", .{@tagName(parent_value)}),
+    };
+}
+
 pub const Environment = struct {
     items: std.StringHashMap(Value),
     outer: ?*Environment = null,
@@ -341,28 +367,19 @@ pub const Value = union(enum) {
     void: void,
     function: FunctionValue,
     @"return": *Value,
+    @"struct": StructValue,
 
-    pub fn format(self: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) anyerror!void {
+        _ = fmt;
+        _ = options;
         switch (self) {
-            .string => try writer.writeAll(self.string),
+            .string => try writer.print("{s}", .{self.string}),
             .number => try writer.print("{d}", .{self.number}),
             .boolean => try writer.print("{}", .{self.boolean}),
-            .function => {
-                try writer.writeAll("fn");
-                if (self.function.name) |name| {
-                    try writer.print(" {}", .{name});
-                }
-                try writer.writeAll("(");
-                for (self.function.parameters.items, 0..) |param, i| {
-                    try writer.print("{}", .{param.identifier});
-                    if (i < self.function.parameters.items.len - 1) {
-                        try writer.writeAll(", ");
-                    }
-                }
-                try writer.print(") {{...}}", .{});
-            },
-            .@"return" => try self.@"return".format(fmt, options, writer),
-            .void => try writer.writeAll("void"),
+            .function => try writer.print("{}", .{self.function}),
+            .@"return" => try writer.print("{}", .{self.@"return"}),
+            .void => try writer.writeAll("(void)"),
+            .@"struct" => try writer.print("{}", .{self.@"struct"}),
         }
     }
 };
@@ -372,4 +389,67 @@ const FunctionValue = struct {
     parameters: std.ArrayList(*Expression),
     body: BlockStatement,
     env: *Environment,
+
+    pub fn format(self: FunctionValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.writeAll("fn");
+        if (self.name) |name| {
+            try writer.print(" {}", .{name});
+        }
+        try writer.writeAll("(");
+        for (self.parameters.items, 0..) |param, i| {
+            try writer.print("{}", .{param.identifier});
+            if (i < self.parameters.items.len - 1) {
+                try writer.writeAll(", ");
+            }
+        }
+        try writer.writeAll(") {{\n");
+        for (self.body.statements.items) |statement| {
+            try writer.print("{}", .{statement});
+            try writer.writeAll("\n");
+        }
+        try writer.writeAll("}}");
+    }
 };
+
+const StructValue = struct {
+    map: std.StringHashMap(Value),
+
+    pub fn format(self: StructValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.writeAll("{{");
+        var iter = self.map.iterator();
+        while (iter.next()) |entry| {
+            try writer.print("{s}", .{entry.key_ptr.*});
+            try writer.writeAll(": ");
+            try writer.print("{}", .{entry.value_ptr.*});
+            if (iter.index < self.map.count() - 1) {
+                try writer.writeAll(", ");
+            }
+        }
+        try writer.writeAll("}}");
+    }
+};
+
+const Lexer = @import("./Lexer.zig");
+
+test "accessor" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init(
+        \\let car = { wheels = 4 }
+        \\car.wheels
+    );
+    var parser = try Parser.init(allocator, &lexer);
+    var env = Environment.init(allocator);
+    var interpreter = Interpreter.init(allocator, &parser, &env);
+
+    const value = try interpreter.run();
+
+    try std.testing.expectEqual(4, value.number);
+}

@@ -120,7 +120,7 @@ fn parseFunctionStatement(self: *Parser) !*Statement {
     const token = self.current_token;
     try self.advanceExpect(.function);
 
-    const name = try self.parseIdentifier();
+    const name = try self.parseIdentifierExpression();
     const parameters = try self.parseExpressionList(.right_paren);
     const body = try self.parseBlockStatement();
 
@@ -178,13 +178,14 @@ fn parseExpressionStatement(self: *Parser) !*Statement {
 fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
     // prefix parse fns
     var left = switch (self.current_token.kind) {
-        .identifier => try self.parseIdentifier(),
+        .identifier => try self.parseIdentifierExpression(),
         .number => try self.parseNumber(),
         .string => try self.parseString(),
         .true, .false => try self.parseBoolean(),
         .bang, .minus => try self.parsePrefixExpression(),
         .@"if" => try self.parseIfExpression(),
         .function => try self.parseFunctionExpression(),
+        .left_brace => try self.parseStructExpression(),
         else => return error.InvalidExpression,
     };
 
@@ -209,6 +210,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
             .modulo_equals,
             => try self.parseInfixExpression(left),
             .left_paren => try self.parseCallExpression(left),
+            .dot => try self.parseAccessorExpression(left),
             else => break,
         };
     }
@@ -216,16 +218,19 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
     return left;
 }
 
-fn parseIdentifier(self: *Parser) !*Expression {
+fn parseIdentifierExpression(self: *Parser) !*Expression {
+    const expression = try self.allocator.create(Expression);
+    expression.* = .{ .identifier = try self.parseIdentifier() };
+    return expression;
+}
+
+fn parseIdentifier(self: *Parser) !Identifier {
     const identifier = Identifier{
         .token = self.current_token,
         .lexeme = self.current_token.lexeme,
     };
-
-    const expression = try self.allocator.create(Expression);
-    expression.* = .{ .identifier = identifier };
-    try self.advance();
-    return expression;
+    try self.advanceExpect(.identifier);
+    return identifier;
 }
 
 fn parseNumber(self: *Parser) !*Expression {
@@ -370,6 +375,63 @@ fn parseIfExpression(self: *Parser) !*Expression {
     return expression;
 }
 
+fn parseStructExpression(self: *Parser) !*Expression {
+    const token = self.current_token;
+    try self.advanceExpect(.left_brace);
+
+    var map = std.AutoHashMap(*Expression, *Expression).init(self.allocator);
+    while (true) { // TODO: better condition
+        switch (self.current_token.kind) {
+            .identifier => {
+                const key = try self.parseExpression(.lowest);
+                switch (key.*) {
+                    .identifier => {},
+                    else => return error.InvalidStructKey,
+                }
+                try self.advanceExpect(.assign);
+                const value = try self.parseExpression(.lowest);
+                const result = try map.getOrPut(key);
+                if (result.found_existing) {
+                    return error.DuplicateStructKey;
+                } else {
+                    result.value_ptr.* = value;
+                }
+                if (self.current_token.kind == .comma) {
+                    try self.advance();
+                }
+            },
+            .right_brace => break,
+            else => return error.UnexpectedToken,
+        }
+    }
+    try self.advanceExpect(.right_brace);
+
+    const @"struct" = StructExpression{
+        .token = token,
+        .map = map,
+    };
+
+    const expression = try self.allocator.create(Expression);
+    expression.* = .{ .@"struct" = @"struct" };
+    return expression;
+}
+
+fn parseAccessorExpression(self: *Parser, left: *Expression) !*Expression {
+    const token = self.current_token;
+    try self.advanceExpect(.dot);
+    const accessor = try self.parseExpression(.lowest);
+
+    const exp = AccessorExpression{
+        .token = token,
+        .parent = left,
+        .key = accessor,
+    };
+
+    const expression = try self.allocator.create(Expression);
+    expression.* = .{ .accessor = exp };
+    return expression;
+}
+
 pub const Statement = union(enum) {
     let: LetStatement,
     expression: *Expression,
@@ -378,6 +440,20 @@ pub const Statement = union(enum) {
     block: BlockStatement,
     function: FunctionStatement,
     @"return": ReturnStatement,
+
+    pub fn format(self: Statement, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try switch (self) {
+            .let => writer.print("{}", .{self.let}),
+            .expression => writer.print("{}", .{self.expression}),
+            .@"for" => writer.print("{}", .{self.@"for"}),
+            .@"break" => writer.writeAll("break"),
+            .block => writer.print("{}", .{self.block}),
+            .function => writer.print("{}", .{self.function}),
+            .@"return" => writer.print("{}", .{self.@"return"}),
+        };
+    }
 };
 
 pub const Identifier = struct {
@@ -396,6 +472,13 @@ pub const LetStatement = struct {
     token: Token,
     name: Identifier,
     value: *Expression,
+
+    pub fn format(self: LetStatement, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        try writer.print("{s} {} = {}", .{ self.token.lexeme, self.name, self.value.* });
+    }
 };
 
 pub const ForStatement = struct {
@@ -404,6 +487,18 @@ pub const ForStatement = struct {
     condition: ?*Expression,
     after: ?*Expression,
     block: BlockStatement,
+
+    pub fn format(self: ForStatement, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.writeAll("for ");
+        if (self.initial) |initial| {
+            try writer.print("({}; {}; {}) ", .{ initial.*, self.condition.?.*, self.after.?.* });
+        } else if (self.condition) |condition| {
+            try writer.print("({}) ", .{condition.*});
+        }
+        try writer.print("{}", .{self.block});
+    }
 };
 
 pub const FunctionStatement = struct {
@@ -411,16 +506,46 @@ pub const FunctionStatement = struct {
     name: Identifier,
     parameters: std.ArrayList(*Expression),
     body: BlockStatement,
+
+    pub fn format(self: FunctionStatement, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("fn {}(", .{self.name});
+        for (self.parameters.items, 0..) |param, i| {
+            try writer.print("{}", .{param.*});
+            if (i < self.parameters.items.len - 1) {
+                try writer.writeAll(", ");
+            }
+        }
+        try writer.print(") {}\n", .{self.body});
+    }
 };
 
 pub const ReturnStatement = struct {
     token: Token,
     return_value: *Expression,
+
+    pub fn format(self: ReturnStatement, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("return {}", .{self.return_value.*});
+    }
 };
 
 pub const BlockStatement = struct {
     token: Token,
     statements: std.ArrayList(*Statement),
+
+    pub fn format(self: BlockStatement, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        try writer.writeAll("{{\n");
+        for (self.statements.items) |item| {
+            try writer.print("\t{}\n", .{item.*});
+        }
+        try writer.writeAll("}}");
+    }
 };
 
 pub const Expression = union(enum) {
@@ -433,12 +558,38 @@ pub const Expression = union(enum) {
     call: CallExpression,
     @"if": IfExpression,
     function: FunctionExpression,
+    @"struct": StructExpression,
+    accessor: AccessorExpression,
+
+    pub fn format(self: Expression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try switch (self) {
+            .identifier => writer.print("{}", .{self.identifier}),
+            .number => writer.print("{d}", .{self.number}),
+            .string => writer.print("{s}", .{self.string}),
+            .boolean => writer.print("{}", .{self.boolean}),
+            .prefix => writer.print("{}", .{self.prefix}),
+            .infix => writer.print("{}", .{self.infix}),
+            .call => writer.print("{}", .{self.call}),
+            .@"if" => writer.print("{}", .{self.@"if"}),
+            .function => writer.print("{}", .{self.function}),
+            .@"struct" => writer.print("{}", .{self.@"struct"}),
+            .accessor => writer.print("{}", .{self.accessor}),
+        };
+    }
 };
 
 pub const PrefixExpression = struct {
     token: Token,
     operator: []const u8,
     right: *Expression,
+
+    pub fn format(self: PrefixExpression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{s}{}", .{ self.operator, self.right.* });
+    }
 };
 
 pub const InfixExpression = struct {
@@ -446,12 +597,31 @@ pub const InfixExpression = struct {
     left: *Expression,
     operator: []const u8,
     right: *Expression,
+
+    pub fn format(self: InfixExpression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{} {s} {}", .{ self.left.*, self.operator, self.right.* });
+    }
 };
 
 pub const CallExpression = struct {
     token: Token,
     function: *Expression,
     arguments: std.ArrayList(*Expression),
+
+    pub fn format(self: CallExpression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{}(", .{self.function.*});
+        for (self.arguments.items, 0..) |arg, i| {
+            try writer.print("{}", .{arg.*});
+            if (i < self.arguments.items.len - 1) {
+                try writer.writeAll(", ");
+            }
+        }
+        try writer.writeAll(")");
+    }
 };
 
 pub const IfExpression = struct {
@@ -463,13 +633,72 @@ pub const IfExpression = struct {
     pub const Alternative = union(enum) {
         block: BlockStatement, // else block
         expression: *Expression, // else if expression
+
+        pub fn format(self: Alternative, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try switch (self) {
+                .block => writer.print("{}", .{self.block}),
+                .expression => writer.print("{}", .{self.expression.*}),
+            };
+        }
     };
+
+    pub fn format(self: IfExpression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("if ({}) {}", .{ self.condition.*, self.consequence });
+        if (self.alternative) |alt| {
+            try writer.print(" else {}", .{alt});
+        }
+    }
 };
 
 pub const FunctionExpression = struct {
     token: Token,
     parameters: std.ArrayList(*Expression),
     body: BlockStatement,
+
+    pub fn format(self: FunctionExpression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.writeAll("fn(");
+        for (self.parameters.items, 0..) |param, i| {
+            try writer.print("{}", .{param.*});
+            if (i < self.parameters.items.len - 1) {
+                try writer.writeAll(", ");
+            }
+        }
+        try writer.print(") {}", .{self.body});
+    }
+};
+
+pub const StructExpression = struct {
+    token: Token,
+    map: std.AutoHashMap(*Expression, *Expression),
+
+    pub fn format(self: StructExpression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.writeAll("{{\n");
+        var iter = self.map.iterator();
+        while (iter.next()) |entry| {
+            try writer.print("\t{}: {}\n", .{ entry.key_ptr.*.*, entry.value_ptr.*.* });
+        }
+        try writer.writeAll("}}");
+    }
+};
+
+pub const AccessorExpression = struct {
+    token: Token,
+    parent: *Expression,
+    key: *Expression,
+
+    pub fn format(self: AccessorExpression, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{}.{}", .{ self.parent.*, self.key.* });
+    }
 };
 
 const Precedence = enum {
@@ -482,6 +711,7 @@ const Precedence = enum {
     product,
     prefix,
     call,
+    accessor,
 };
 
 fn tokenPrecedence(kind: Token.Kind) Precedence {
@@ -493,6 +723,7 @@ fn tokenPrecedence(kind: Token.Kind) Precedence {
         .plus, .plus_equals, .minus, .minus_equals => .sum,
         .slash, .slash_equals, .asterisk, .asterisk_equals, .modulo, .modulo_equals => .product,
         .left_paren => .call,
+        .dot => .accessor,
         else => .lowest,
     };
 }
@@ -803,4 +1034,66 @@ test "function expression" {
     try std.testing.expectEqualStrings("a", return_stmt.return_value.infix.left.identifier.lexeme);
     try std.testing.expectEqualStrings("+", return_stmt.return_value.infix.operator);
     try std.testing.expectEqualStrings("b", return_stmt.return_value.infix.right.identifier.lexeme);
+}
+
+test "empty struct" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("{}");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+
+    const @"struct" = statement.?.expression.@"struct";
+
+    try std.testing.expectEqual(0, @"struct".map.count());
+}
+
+test "struct" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("{ a = \"string\", b = 1, c = {} }");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+
+    const @"struct" = statement.?.expression.@"struct";
+
+    try std.testing.expectEqual(3, @"struct".map.count());
+
+    var iter = @"struct".map.iterator();
+    while (iter.next()) |entry| {
+        const key = entry.key_ptr.*.identifier.lexeme;
+        if (std.mem.eql(u8, "a", key)) {
+            try std.testing.expectEqualStrings("string", entry.value_ptr.*.string);
+        } else if (std.mem.eql(u8, "b", key)) {
+            try std.testing.expectEqual(1, entry.value_ptr.*.number);
+        } else if (std.mem.eql(u8, "c", key)) {
+            const value = entry.value_ptr.*.@"struct";
+            try std.testing.expectEqual(0, value.map.count());
+        } else unreachable;
+    }
+}
+
+test "accessor" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("car.wheels");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+
+    const accessor = statement.?.expression.accessor;
+
+    try std.testing.expectEqualStrings("car", accessor.parent.identifier.lexeme);
+    try std.testing.expectEqualStrings("wheels", accessor.key.identifier.lexeme);
 }
