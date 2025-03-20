@@ -208,6 +208,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
             .slash_equals,
             .modulo,
             .modulo_equals,
+            .assign,
             => try self.parseInfixExpression(left),
             .left_paren => try self.parseCallExpression(left),
             .dot, .left_square_bracket => try self.parseAccessorExpression(left),
@@ -336,14 +337,31 @@ fn parseInfixExpression(self: *Parser, left: *Expression) !*Expression {
         .right = right,
     };
 
-    // assignment should only be done with identifiers on the left
-    if ((std.mem.eql(u8, "+=", operator) or std.mem.eql(u8, "-=", operator) or std.mem.eql(u8, "*=", operator) or std.mem.eql(u8, "/=", operator)) and left.* != .identifier) {
-        return error.InvalidAssignmentOperation;
+    // check that assignment is legal
+    if (isAssignmentOperator(operator) and left.* != .accessor and left.* != .identifier) {
+        return error.IllegalAssignmentOperation;
     }
 
     const expression = try self.allocator.create(Expression);
     expression.* = .{ .infix = infix };
     return expression;
+}
+
+const eql = std.mem.eql;
+fn isAssignmentOperator(op: []const u8) bool {
+    if (eql(u8, "=", op)) {
+        return true;
+    } else if (eql(u8, "+=", op)) {
+        return true;
+    } else if (eql(u8, "-=", op)) {
+        return true;
+    } else if (eql(u8, "*=", op)) {
+        return true;
+    } else if (eql(u8, "/=", op)) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 fn parseIfExpression(self: *Parser) !*Expression {
@@ -383,13 +401,12 @@ fn parseStructExpression(self: *Parser) !*Expression {
     while (true) { // TODO: better condition
         switch (self.current_token.kind) {
             .identifier => {
-                const key = try self.parseExpression(.lowest);
-                switch (key.*) {
-                    .identifier => {},
-                    else => return error.InvalidStructKey,
-                }
-                try self.advanceExpect(.assign);
-                const value = try self.parseExpression(.lowest);
+                const assign_infix = try self.parseExpression(.lowest);
+                std.debug.assert(assign_infix.* == .infix);
+                std.debug.assert(eql(u8, "=", assign_infix.infix.operator));
+
+                const key = assign_infix.infix.left;
+                const value = assign_infix.infix.right;
                 const result = try map.getOrPut(key);
                 if (result.found_existing) {
                     return error.DuplicateStructKey;
@@ -423,7 +440,7 @@ fn parseAccessorExpression(self: *Parser, left: *Expression) !*Expression {
     switch (self.current_token.kind) {
         .dot => {
             try self.advance();
-            accessor = try self.parseExpression(.lowest);
+            accessor = try self.parseExpression(.assign);
         },
         .left_square_bracket => {
             try self.advance();
@@ -724,6 +741,7 @@ const Precedence = enum {
     prefix,
     call,
     accessor,
+    assign,
 };
 
 fn tokenPrecedence(kind: Token.Kind) Precedence {
@@ -736,6 +754,7 @@ fn tokenPrecedence(kind: Token.Kind) Precedence {
         .slash, .slash_equals, .asterisk, .asterisk_equals, .modulo, .modulo_equals => .product,
         .left_paren => .call,
         .dot, .left_square_bracket => .accessor,
+        .assign => .assign,
         else => .lowest,
     };
 }
@@ -1108,4 +1127,26 @@ test "accessor" {
 
     try std.testing.expectEqualStrings("car", accessor.parent.identifier.lexeme);
     try std.testing.expectEqualStrings("wheels", accessor.key.identifier.lexeme);
+}
+
+test "accessor assign" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init("pokedex.entries = 5");
+    var parser = try Parser.init(allocator, &lexer);
+
+    const statement = try parser.next();
+
+    const infix = statement.?.expression.infix;
+
+    const accessor = infix.left.accessor;
+    try std.testing.expectEqualStrings("pokedex", accessor.parent.identifier.lexeme);
+    try std.testing.expectEqualStrings("entries", accessor.key.identifier.lexeme);
+
+    try std.testing.expectEqualStrings("=", infix.operator);
+
+    try std.testing.expectEqual(5, infix.right.number);
 }

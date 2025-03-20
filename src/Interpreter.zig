@@ -176,6 +176,10 @@ fn evalMinusPrefixOperatorExpression(right: ?Value) !Value {
 }
 
 fn evalInfixExpression(self: *Interpreter, infix: InfixExpression, env: *Environment) !Value {
+    if (std.mem.eql(u8, "=", infix.operator)) {
+        return try self.evalAssignInfixExpression(infix, env);
+    }
+
     const left = try self.evalExpression(infix.left.*, env);
     const right = try self.evalExpression(infix.right.*, env);
 
@@ -192,6 +196,29 @@ fn evalInfixExpression(self: *Interpreter, infix: InfixExpression, env: *Environ
     } else {
         return error.InfixTypeMismatch;
     }
+}
+
+fn evalAssignInfixExpression(self: *Interpreter, infix: InfixExpression, env: *Environment) !Value {
+    const value = try self.evalExpression(infix.right.*, env);
+
+    // check that we can actually assign to LHS
+    switch (infix.left.*) {
+        .identifier => |ident| try env.set(ident.lexeme, value),
+        .accessor => |accessor| {
+            const key = try self.evalAccessorKey(accessor, env);
+            var parent = try self.evalExpression(accessor.parent.*, env);
+            switch (parent) {
+                .@"struct" => |*s| {
+                    try s.map.put(key, value);
+                    try env.set(accessor.parent.identifier.lexeme, parent);
+                },
+                else => return error.IllegalAssignmentOperation,
+            }
+        },
+        else => return error.IllegalAssignmentOperation,
+    }
+
+    return value;
 }
 
 fn isAssignmentInfixExpression(infix: InfixExpression) bool {
@@ -330,14 +357,34 @@ fn evalStructExpression(self: *Interpreter, @"struct": StructExpression, env: *E
 
 fn evalAccessorExpression(self: *Interpreter, accessor: AccessorExpression, env: *Environment) !Value {
     const parent_value = try self.evalExpression(accessor.parent.*, env);
-    const key = switch (accessor.key.*) {
-        .identifier => accessor.key.identifier.lexeme,
+    const key = try self.evalAccessorKey(accessor, env);
+    return switch (parent_value) {
+        .@"struct" => |@"struct"| @"struct".map.get(key) orelse {
+            std.debug.print("tried to access property \"{s}\" of {}, but it did not exist.\n", .{ key, parent_value });
+            return error.UnknownStructKey;
+        },
+        else => {
+            std.debug.print("tried to access property \"{s}\" of {}, but this type does not support property access.\n", .{ key, parent_value });
+            return error.IllegalAccessorExpression;
+        },
+    };
+}
+
+fn evalAccessorKey(self: *Interpreter, accessor: AccessorExpression, env: *Environment) ![]const u8 {
+    return switch (accessor.key.*) {
+        .identifier => blk: {
+            if (accessor.token.kind == .dot) {
+                break :blk accessor.key.identifier.lexeme;
+            } else {
+                const key_value = try self.evalExpression(accessor.key.*, env);
+                break :blk switch (key_value) {
+                    .string => key_value.string,
+                    else => std.debug.panic("unsupported accessor key type {s}", .{@tagName(key_value)}),
+                };
+            }
+        },
         .string => accessor.key.string,
         else => return error.InvalidAccessor,
-    };
-    return switch (parent_value) {
-        .@"struct" => |@"struct"| @"struct".map.get(key) orelse error.UnknownStructKey,
-        else => std.debug.panic("attempting to access property of unhandled type {s}", .{@tagName(parent_value)}),
     };
 }
 
@@ -377,7 +424,7 @@ pub const Value = union(enum) {
         _ = fmt;
         _ = options;
         switch (self) {
-            .string => try writer.print("{s}", .{self.string}),
+            .string => try writer.print("\"{s}\"", .{self.string}),
             .number => try writer.print("{d}", .{self.number}),
             .boolean => try writer.print("{}", .{self.boolean}),
             .function => try writer.print("{}", .{self.function}),
@@ -423,17 +470,19 @@ const StructValue = struct {
     pub fn format(self: StructValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
-        try writer.writeAll("{{");
+        try writer.writeAll("{");
         var iter = self.map.iterator();
+        var i: u32 = 0;
         while (iter.next()) |entry| {
-            try writer.print("{s}", .{entry.key_ptr.*});
+            try writer.print("\"{s}\"", .{entry.key_ptr.*});
             try writer.writeAll(": ");
             try writer.print("{}", .{entry.value_ptr.*});
-            if (iter.index < self.map.count() - 1) {
+            if (i < self.map.count() - 1) {
                 try writer.writeAll(", ");
             }
+            i += 1;
         }
-        try writer.writeAll("}}");
+        try writer.writeAll("}");
     }
 };
 
@@ -467,6 +516,46 @@ test "accessor expression" {
     var lexer = Lexer.init(
         \\let car = { wheels = 4 }
         \\car["wheels"]
+    );
+    var parser = try Parser.init(allocator, &lexer);
+    var env = Environment.init(allocator);
+    var interpreter = Interpreter.init(allocator, &parser, &env);
+
+    const value = try interpreter.run();
+
+    try std.testing.expectEqual(4, value.number);
+}
+
+test "accessor identifier" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init(
+        \\let car = { wheels = 4 }
+        \\let key = "wheels"
+        \\car[key]
+    );
+    var parser = try Parser.init(allocator, &lexer);
+    var env = Environment.init(allocator);
+    var interpreter = Interpreter.init(allocator, &parser, &env);
+
+    const value = try interpreter.run();
+
+    try std.testing.expectEqual(4, value.number);
+}
+
+test "accessor assign" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init(
+        \\let car = {}
+        \\car.wheels = 4
+        \\car.wheels
     );
     var parser = try Parser.init(allocator, &lexer);
     var env = Environment.init(allocator);
