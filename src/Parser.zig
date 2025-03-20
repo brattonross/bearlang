@@ -186,7 +186,9 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
         .@"if" => try self.parseIfExpression(),
         .function => try self.parseFunctionExpression(),
         .left_brace => try self.parseStructExpression(),
-        else => return error.InvalidExpression,
+        else => {
+            return error.InvalidExpression;
+        },
     };
 
     while (@intFromEnum(precedence) < @intFromEnum(tokenPrecedence(self.current_token.kind))) {
@@ -204,6 +206,8 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
             .plus_equals,
             .minus,
             .minus_equals,
+            .asterisk,
+            .asterisk_equals,
             .slash,
             .slash_equals,
             .modulo,
@@ -418,7 +422,9 @@ fn parseStructExpression(self: *Parser) !*Expression {
                 }
             },
             .right_brace => break,
-            else => return error.UnexpectedToken,
+            else => {
+                return error.UnexpectedToken;
+            },
         }
     }
     try self.advanceExpect(.right_brace);
@@ -569,11 +575,11 @@ pub const BlockStatement = struct {
         _ = fmt;
         _ = options;
 
-        try writer.writeAll("{{\n");
+        try writer.writeAll("{\n");
         for (self.statements.items) |item| {
             try writer.print("\t{}\n", .{item.*});
         }
-        try writer.writeAll("}}");
+        try writer.writeAll("}");
     }
 };
 

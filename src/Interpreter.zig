@@ -58,7 +58,6 @@ fn evalStatement(self: *Interpreter, statement: Statement, env: *Environment) an
 fn evalLetStatement(self: *Interpreter, let: LetStatement, env: *Environment) !Value {
     const value = try self.evalExpression(let.value.*, env);
     if (value == .void) {
-        std.debug.print("invalid let statement: expected value {} to return non-void value.\n", .{let.value.*});
         return error.InvalidLetStatement;
     }
 
@@ -140,14 +139,16 @@ fn evalExpression(self: *Interpreter, expression: Expression, env: *Environment)
         .infix => try self.evalInfixExpression(expression.infix, env),
         .call => try self.evalCallExpression(expression.call, env),
         .@"if" => try self.evalIfExpression(expression.@"if", env),
-        .function => self.evalFunctionExpression(expression.function, env),
+        .function => try self.evalFunctionExpression(expression.function, env),
         .@"struct" => try self.evalStructExpression(expression.@"struct", env),
         .accessor => try self.evalAccessorExpression(expression.accessor, env),
     };
 }
 
 fn evalIdentifier(_: *Interpreter, identifier: Identifier, env: *Environment) !Value {
-    return env.get(identifier.lexeme) orelse error.UnknownIdentifier;
+    return env.get(identifier.lexeme) orelse {
+        return error.UnknownIdentifier;
+    };
 }
 
 fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression, env: *Environment) !Value {
@@ -276,7 +277,7 @@ fn evalBooleanInfixExpression(operator: []const u8, left: bool, right: bool) !Va
     }
 }
 
-fn evalFunctionExpression(_: *Interpreter, function: FunctionExpression, env: *Environment) Value {
+fn evalFunctionExpression(_: *Interpreter, function: FunctionExpression, env: *Environment) !Value {
     const value = Value{
         .function = .{
             .name = null,
@@ -306,12 +307,14 @@ fn evalCallExpression(self: *Interpreter, call: CallExpression, env: *Environmen
             try arguments.append(arg_value);
         }
 
-        var fn_env = Environment.initEnclosed(self.allocator, function.env);
+        var fn_env = try self.allocator.create(Environment);
+        fn_env.* = Environment.initEnclosed(self.allocator, function.env);
+
         for (function.parameters.items, 0..) |param, i| {
             try fn_env.set(param.identifier.lexeme, arguments.items[i]);
         }
 
-        const result = try self.evalBlockStatement(function.body, &fn_env);
+        const result = try self.evalBlockStatement(function.body, fn_env);
         if (result == .@"return") {
             return result.@"return".*;
         }
@@ -360,11 +363,9 @@ fn evalAccessorExpression(self: *Interpreter, accessor: AccessorExpression, env:
     const key = try self.evalAccessorKey(accessor, env);
     return switch (parent_value) {
         .@"struct" => |@"struct"| @"struct".map.get(key) orelse {
-            std.debug.print("tried to access property \"{s}\" of {}, but it did not exist.\n", .{ key, parent_value });
             return error.UnknownStructKey;
         },
         else => {
-            std.debug.print("tried to access property \"{s}\" of {}, but this type does not support property access.\n", .{ key, parent_value });
             return error.IllegalAccessorExpression;
         },
     };
@@ -403,11 +404,30 @@ pub const Environment = struct {
     }
 
     pub fn get(self: Environment, key: []const u8) ?Value {
-        return self.items.get(key);
+        if (self.items.get(key)) |value| {
+            return value;
+        }
+        if (self.outer) |outer| {
+            return outer.get(key);
+        }
+        return null;
     }
 
     pub fn set(self: *Environment, key: []const u8, value: Value) !void {
         try self.items.put(key, value);
+    }
+
+    pub fn format(self: Environment, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        var iter = self.items.iterator();
+        while (iter.next()) |entry| {
+            try writer.print("{s} = {}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+        }
+        if (self.outer) |outer| {
+            try writer.print("{}", .{outer});
+        }
     }
 };
 
@@ -424,7 +444,7 @@ pub const Value = union(enum) {
         _ = fmt;
         _ = options;
         switch (self) {
-            .string => try writer.print("\"{s}\"", .{self.string}),
+            .string => try writer.print("{s}", .{self.string}),
             .number => try writer.print("{d}", .{self.number}),
             .boolean => try writer.print("{}", .{self.boolean}),
             .function => try writer.print("{}", .{self.function}),
@@ -455,12 +475,12 @@ const FunctionValue = struct {
                 try writer.writeAll(", ");
             }
         }
-        try writer.writeAll(") {{\n");
+        try writer.writeAll(") {\n");
         for (self.body.statements.items) |statement| {
             try writer.print("{}", .{statement});
             try writer.writeAll("\n");
         }
-        try writer.writeAll("}}");
+        try writer.writeAll("}");
     }
 };
 
@@ -564,4 +584,29 @@ test "accessor assign" {
     const value = try interpreter.run();
 
     try std.testing.expectEqual(4, value.number);
+}
+
+test "recursion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init(
+        \\fn fib(n) {
+        \\  if (n < 2) {
+        \\      return n
+        \\  }
+        \\  return fib(n - 1) + fib(n - 2)
+        \\}
+        \\
+        \\fib(7)
+    );
+    var parser = try Parser.init(allocator, &lexer);
+    var env = Environment.init(allocator);
+    var interpreter = Interpreter.init(allocator, &parser, &env);
+
+    const value = try interpreter.run();
+
+    try std.testing.expectEqual(13, value.number);
 }
