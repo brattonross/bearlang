@@ -330,7 +330,11 @@ fn evalStructExpression(self: *Interpreter, @"struct": StructExpression, env: *E
 
 fn evalAccessorExpression(self: *Interpreter, accessor: AccessorExpression, env: *Environment) !Value {
     const parent_value = try self.evalExpression(accessor.parent.*, env);
-    const key = accessor.key.identifier.lexeme; // TODO: assumes identifier
+    const key = switch (accessor.key.*) {
+        .identifier => accessor.key.identifier.lexeme,
+        .string => accessor.key.string,
+        else => return error.InvalidAccessor,
+    };
     return switch (parent_value) {
         .@"struct" => |@"struct"| @"struct".map.get(key) orelse error.UnknownStructKey,
         else => std.debug.panic("attempting to access property of unhandled type {s}", .{@tagName(parent_value)}),
@@ -444,6 +448,25 @@ test "accessor" {
     var lexer = Lexer.init(
         \\let car = { wheels = 4 }
         \\car.wheels
+    );
+    var parser = try Parser.init(allocator, &lexer);
+    var env = Environment.init(allocator);
+    var interpreter = Interpreter.init(allocator, &parser, &env);
+
+    const value = try interpreter.run();
+
+    try std.testing.expectEqual(4, value.number);
+}
+
+test "accessor expression" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    var lexer = Lexer.init(
+        \\let car = { wheels = 4 }
+        \\car["wheels"]
     );
     var parser = try Parser.init(allocator, &lexer);
     var env = Environment.init(allocator);

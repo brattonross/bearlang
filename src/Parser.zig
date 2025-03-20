@@ -210,7 +210,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
             .modulo_equals,
             => try self.parseInfixExpression(left),
             .left_paren => try self.parseCallExpression(left),
-            .dot => try self.parseAccessorExpression(left),
+            .dot, .left_square_bracket => try self.parseAccessorExpression(left),
             else => break,
         };
     }
@@ -418,8 +418,20 @@ fn parseStructExpression(self: *Parser) !*Expression {
 
 fn parseAccessorExpression(self: *Parser, left: *Expression) !*Expression {
     const token = self.current_token;
-    try self.advanceExpect(.dot);
-    const accessor = try self.parseExpression(.lowest);
+
+    var accessor: *Expression = undefined;
+    switch (self.current_token.kind) {
+        .dot => {
+            try self.advance();
+            accessor = try self.parseExpression(.lowest);
+        },
+        .left_square_bracket => {
+            try self.advance();
+            accessor = try self.parseExpression(.lowest);
+            try self.advanceExpect(.right_square_bracket);
+        },
+        else => return error.UnexpectedToken,
+    }
 
     const exp = AccessorExpression{
         .token = token,
@@ -723,7 +735,7 @@ fn tokenPrecedence(kind: Token.Kind) Precedence {
         .plus, .plus_equals, .minus, .minus_equals => .sum,
         .slash, .slash_equals, .asterisk, .asterisk_equals, .modulo, .modulo_equals => .product,
         .left_paren => .call,
-        .dot => .accessor,
+        .dot, .left_square_bracket => .accessor,
         else => .lowest,
     };
 }
