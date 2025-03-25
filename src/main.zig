@@ -16,21 +16,27 @@ pub fn main() !void {
 
     const allocator = arena.allocator();
 
+    const stderr = std.io.getStdErr().writer();
+
     var args = try std.process.argsWithAllocator(allocator);
     _ = args.next();
-    if (args.next()) |first_arg| {
-        if (std.mem.eql(u8, "lsp", first_arg)) {
+    if (args.next()) |command| {
+        if (std.mem.eql(u8, "lsp", command)) {
             return try runLSPServer(allocator);
-        } else if (std.mem.eql(u8, "version", first_arg)) {
+        } else if (std.mem.eql(u8, "version", command)) {
             try std.io.getStdOut().writeAll("0.0.0\n");
             return;
         }
 
-        try runFile(allocator, first_arg);
+        runFile(allocator, command) catch |err| {
+            try stderr.print("ERROR: {}\n", .{err});
+        };
         _ = arena.reset(.free_all);
 
         while (args.next()) |path| {
-            try runFile(allocator, path);
+            runFile(allocator, path) catch |err| {
+                try stderr.print("ERROR: {}\n", .{err});
+            };
             _ = arena.reset(.free_all);
         }
     } else {
@@ -41,12 +47,17 @@ pub fn main() !void {
 fn runREPL(allocator: Allocator) !void {
     const stdout = std.io.getStdOut().writer();
     const stdin = std.io.getStdIn().reader();
+    const stderr = std.io.getStdErr().writer();
+
     var env = Environment.init(allocator);
 
     while (true) {
         try stdout.writeAll(">> ");
         if (try stdin.readUntilDelimiterOrEofAlloc(allocator, '\n', 1024)) |src| {
-            const value = try runSrc(allocator, src, &env);
+            const value = runSrc(allocator, src, &env) catch |err| {
+                try stderr.print("ERROR: {}\n", .{err});
+                continue;
+            };
             if (value != .void) {
                 try stdout.print("{}\n", .{value});
             }

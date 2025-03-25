@@ -63,6 +63,12 @@ pub const Token = struct {
 
 const Lexer = @This();
 
+pub const LexError = error{
+    UnexpectedToken,
+    UnterminatedStringLiteral,
+    InvalidNumber,
+};
+
 src: []const u8,
 pos: u32,
 line: u32,
@@ -71,7 +77,7 @@ pub fn init(src: []const u8) Lexer {
     return .{ .src = src, .pos = 0, .line = 1 };
 }
 
-pub fn nextToken(self: *Lexer) !Token {
+pub fn nextToken(self: *Lexer) LexError!Token {
     while (self.currentLexeme()) |current| {
         if (isWhitespace(current)) {
             self.advance();
@@ -172,7 +178,7 @@ pub fn nextToken(self: *Lexer) !Token {
             } else if (isDigit(current)) {
                 return try self.scanNumber();
             } else {
-                return error.UnexpectedCharacter;
+                return LexError.UnexpectedToken;
             }
         },
     };
@@ -222,7 +228,7 @@ fn scanIdentifier(self: *Lexer) Token {
     return .{ .kind = kind, .lexeme = lexeme, .line = self.line };
 }
 
-fn scanNumber(self: *Lexer) !Token {
+fn scanNumber(self: *Lexer) LexError!Token {
     const start_pos = self.pos;
 
     while (self.currentLexeme()) |current| {
@@ -241,14 +247,14 @@ fn scanNumber(self: *Lexer) !Token {
                 }
             };
         } else if (isAlpha(current_lexeme)) {
-            return error.UnexpectedToken;
+            return LexError.InvalidNumber;
         }
     }
 
     return .{ .kind = .number, .lexeme = self.src[start_pos..self.pos], .line = self.line };
 }
 
-fn scanString(self: *Lexer) !Token {
+fn scanString(self: *Lexer) LexError!Token {
     self.advance(); // advance past opening `"`
     const start_pos = self.pos;
     while (true) {
@@ -256,7 +262,7 @@ fn scanString(self: *Lexer) !Token {
             if (current == '"') break;
             self.advance();
         } else {
-            return error.UnterminatedString;
+            return LexError.UnterminatedStringLiteral;
         }
     }
     self.advance(); // advance past closing `"`

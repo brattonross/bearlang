@@ -5,6 +5,11 @@ const Token = Lexer.Token;
 
 const Parser = @This();
 
+pub const ParseError = error{
+    InvalidAssignment,
+    DuplicateStructKey,
+} || Lexer.LexError || Allocator.Error || std.fmt.ParseFloatError;
+
 allocator: Allocator,
 lexer: *Lexer,
 current_token: Token,
@@ -32,12 +37,11 @@ fn advanceExpect(self: *Parser, expected: Token.Kind) !void {
     if (self.current_token.kind == expected) {
         try self.advance();
     } else {
-        std.log.err("expected next token to be {}, got {}\n", .{ expected, self.current_token.kind });
-        return error.UnexpectedToken;
+        return ParseError.UnexpectedToken;
     }
 }
 
-fn parseStatement(self: *Parser) !*Statement {
+fn parseStatement(self: *Parser) ParseError!*Statement {
     return switch (self.current_token.kind) {
         .let => self.parseLetStatement(),
         .@"for" => self.parseForStatement(),
@@ -175,7 +179,7 @@ fn parseExpressionStatement(self: *Parser) !*Statement {
     return statement;
 }
 
-fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
+fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression {
     // prefix parse fns
     var left = switch (self.current_token.kind) {
         .identifier => try self.parseIdentifierExpression(),
@@ -186,9 +190,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) anyerror!*Expression {
         .@"if" => try self.parseIfExpression(),
         .function => try self.parseFunctionExpression(),
         .left_brace => try self.parseStructExpression(),
-        else => {
-            return error.InvalidExpression;
-        },
+        else => return ParseError.UnexpectedToken,
     };
 
     while (@intFromEnum(precedence) < @intFromEnum(tokenPrecedence(self.current_token.kind))) {
@@ -321,7 +323,7 @@ fn parseExpressionList(self: *Parser, end: Token.Kind) !std.ArrayList(*Expressio
     }
 
     if (self.current_token.kind != end) {
-        return error.InvalidExpressionList;
+        return ParseError.UnexpectedToken;
     }
     try self.advance(); // advance past end
 
@@ -343,7 +345,7 @@ fn parseInfixExpression(self: *Parser, left: *Expression) !*Expression {
 
     // check that assignment is legal
     if (isAssignmentOperator(operator) and left.* != .accessor and left.* != .identifier) {
-        return error.IllegalAssignmentOperation;
+        return ParseError.InvalidAssignment;
     }
 
     const expression = try self.allocator.create(Expression);
@@ -413,7 +415,7 @@ fn parseStructExpression(self: *Parser) !*Expression {
                 const value = assign_infix.infix.right;
                 const result = try map.getOrPut(key);
                 if (result.found_existing) {
-                    return error.DuplicateStructKey;
+                    return ParseError.DuplicateStructKey;
                 } else {
                     result.value_ptr.* = value;
                 }
@@ -422,9 +424,7 @@ fn parseStructExpression(self: *Parser) !*Expression {
                 }
             },
             .right_brace => break,
-            else => {
-                return error.UnexpectedToken;
-            },
+            else => return ParseError.UnexpectedToken,
         }
     }
     try self.advanceExpect(.right_brace);
@@ -453,7 +453,7 @@ fn parseAccessorExpression(self: *Parser, left: *Expression) !*Expression {
             accessor = try self.parseExpression(.lowest);
             try self.advanceExpect(.right_square_bracket);
         },
-        else => return error.UnexpectedToken,
+        else => return ParseError.UnexpectedToken,
     }
 
     const exp = AccessorExpression{

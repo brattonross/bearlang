@@ -23,9 +23,23 @@ const BlockStatement = Parser.BlockStatement;
 
 const Interpreter = @This();
 
+pub const InterpretError = error{
+    InfixTypeMismatch,
+    InvalidAccessorExpression,
+    InvalidArgument,
+    InvalidAssignment,
+    InvalidStatement,
+    UncallableExpression,
+    UnknownIdentifier,
+    UnknownInfixOperator,
+    UnknownPrefixOperator,
+    UnknownStructKey,
+} || Allocator.Error || anyerror;
+
 allocator: Allocator,
 parser: *Parser,
 environment: *Environment,
+stdout: std.io.AnyWriter = std.io.getStdOut().writer().any(),
 
 pub fn init(allocator: Allocator, parser: *Parser, environment: *Environment) Interpreter {
     return .{
@@ -43,7 +57,7 @@ pub fn run(self: *Interpreter) !Value {
     return value;
 }
 
-fn evalStatement(self: *Interpreter, statement: Statement, env: *Environment) anyerror!Value {
+fn evalStatement(self: *Interpreter, statement: Statement, env: *Environment) InterpretError!Value {
     return switch (statement) {
         .let => try self.evalLetStatement(statement.let, env),
         .@"for" => try self.evalForStatement(statement.@"for", env),
@@ -58,9 +72,8 @@ fn evalStatement(self: *Interpreter, statement: Statement, env: *Environment) an
 fn evalLetStatement(self: *Interpreter, let: LetStatement, env: *Environment) !Value {
     const value = try self.evalExpression(let.value.*, env);
     if (value == .void) {
-        return error.InvalidLetStatement;
+        return InterpretError.InvalidStatement;
     }
-
     try env.set(let.name.lexeme, value);
     return .{ .void = {} };
 }
@@ -129,7 +142,7 @@ fn isTruthy(exp: Value) bool {
     };
 }
 
-fn evalExpression(self: *Interpreter, expression: Expression, env: *Environment) anyerror!Value {
+fn evalExpression(self: *Interpreter, expression: Expression, env: *Environment) InterpretError!Value {
     return switch (expression) {
         .identifier => try self.evalIdentifier(expression.identifier, env),
         .string => .{ .string = expression.string },
@@ -146,9 +159,7 @@ fn evalExpression(self: *Interpreter, expression: Expression, env: *Environment)
 }
 
 fn evalIdentifier(_: *Interpreter, identifier: Identifier, env: *Environment) !Value {
-    return env.get(identifier.lexeme) orelse {
-        return error.UnknownIdentifier;
-    };
+    return env.get(identifier.lexeme) orelse InterpretError.UnknownIdentifier;
 }
 
 fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression, env: *Environment) !Value {
@@ -158,7 +169,7 @@ fn evalPrefixExpression(self: *Interpreter, prefix: PrefixExpression, env: *Envi
     } else if (std.mem.eql(u8, "-", prefix.operator)) {
         return try evalMinusPrefixOperatorExpression(right);
     } else {
-        return error.UnknownPrefixOperator;
+        return InterpretError.UnknownPrefixOperator;
     }
 }
 
@@ -171,7 +182,7 @@ fn evalBangOperatorExpression(right: Value) !Value {
 
 fn evalMinusPrefixOperatorExpression(right: ?Value) !Value {
     if (right == null or right.? != .number) {
-        return error.UnknownOperator;
+        return InterpretError.UnknownPrefixOperator;
     }
     return .{ .number = -right.?.number };
 }
@@ -195,7 +206,7 @@ fn evalInfixExpression(self: *Interpreter, infix: InfixExpression, env: *Environ
     } else if (left == .boolean and right == .boolean) {
         return try evalBooleanInfixExpression(infix.operator, left.boolean, right.boolean);
     } else {
-        return error.InfixTypeMismatch;
+        return InterpretError.InfixTypeMismatch;
     }
 }
 
@@ -213,10 +224,10 @@ fn evalAssignInfixExpression(self: *Interpreter, infix: InfixExpression, env: *E
                     try s.map.put(key, value);
                     try env.set(accessor.parent.identifier.lexeme, parent);
                 },
-                else => return error.IllegalAssignmentOperation,
+                else => return InterpretError.InvalidAssignment,
             }
         },
-        else => return error.IllegalAssignmentOperation,
+        else => return InterpretError.InvalidAssignment,
     }
 
     return value;
@@ -234,7 +245,7 @@ fn evalStringInfixExpression(self: *Interpreter, operator: []const u8, left: []c
         const result = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ left, right });
         return .{ .string = result };
     } else {
-        return error.InfixUnknownOperator;
+        return InterpretError.UnknownInfixOperator;
     }
 }
 
@@ -262,8 +273,7 @@ fn evalNumberInfixExpression(operator: []const u8, left: f64, right: f64) !Value
     } else if (std.mem.eql(u8, "%", operator) or std.mem.eql(u8, "%=", operator)) {
         return .{ .number = @mod(left, right) };
     } else {
-        std.log.err("unhandled number infix operator `{s}`", .{operator});
-        return error.InfixUnknownOperator;
+        return InterpretError.UnknownInfixOperator;
     }
 }
 
@@ -273,7 +283,7 @@ fn evalBooleanInfixExpression(operator: []const u8, left: bool, right: bool) !Va
     } else if (std.mem.eql(u8, "or", operator)) {
         return .{ .boolean = left or right };
     } else {
-        return error.InfixUnknownOperator;
+        return InterpretError.UnknownInfixOperator;
     }
 }
 
@@ -290,14 +300,12 @@ fn evalFunctionExpression(_: *Interpreter, function: FunctionExpression, env: *E
 }
 
 fn evalCallExpression(self: *Interpreter, call: CallExpression, env: *Environment) !Value {
-    var stdout = std.io.getStdOut().writer();
-
     const fn_name = call.function.identifier;
 
     // TODO: handle shadowing builtin functions
     if (env.get(fn_name.lexeme)) |value| {
         if (value != .function) {
-            return error.IdentifierNotAFunction;
+            return InterpretError.UncallableExpression;
         }
         const function = value.function;
 
@@ -323,14 +331,14 @@ fn evalCallExpression(self: *Interpreter, call: CallExpression, env: *Environmen
         for (call.arguments.items) |arg| {
             const value = try self.evalExpression(arg.*, env);
             if (value == .void) {
-                return error.InvalidArgument;
+                return InterpretError.InvalidArgument;
             }
-            try stdout.print("{}", .{value});
+            try self.stdout.print("{}", .{value});
         }
-        try stdout.writeAll("\n");
+        try self.stdout.writeAll("\n");
         return .{ .void = {} };
     } else {
-        return error.UnknownIdentifier;
+        return InterpretError.UnknownIdentifier;
     }
 }
 
@@ -362,12 +370,8 @@ fn evalAccessorExpression(self: *Interpreter, accessor: AccessorExpression, env:
     const parent_value = try self.evalExpression(accessor.parent.*, env);
     const key = try self.evalAccessorKey(accessor, env);
     return switch (parent_value) {
-        .@"struct" => |@"struct"| @"struct".map.get(key) orelse {
-            return error.UnknownStructKey;
-        },
-        else => {
-            return error.IllegalAccessorExpression;
-        },
+        .@"struct" => |@"struct"| @"struct".map.get(key) orelse InterpretError.UnknownStructKey,
+        else => InterpretError.InvalidAccessorExpression,
     };
 }
 
@@ -380,12 +384,12 @@ fn evalAccessorKey(self: *Interpreter, accessor: AccessorExpression, env: *Envir
                 const key_value = try self.evalExpression(accessor.key.*, env);
                 break :blk switch (key_value) {
                     .string => key_value.string,
-                    else => std.debug.panic("unsupported accessor key type {s}", .{@tagName(key_value)}),
+                    else => InterpretError.InvalidAccessorExpression,
                 };
             }
         },
         .string => accessor.key.string,
-        else => return error.InvalidAccessor,
+        else => InterpretError.InvalidAccessorExpression,
     };
 }
 
