@@ -1,8 +1,8 @@
 # bearlang
 
-```
-print("hello world")
-```
+Bearlang is a toy scripting language made for educational and recreational purposes.
+
+I built it to bolster my knowledge of programming languages, LSP, and Treesitter.
 
 ## References
 
